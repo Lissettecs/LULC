@@ -260,20 +260,17 @@ print(f"Territorios: {territoryNames}")
 print(f"Tiles MGRS:  {sum(len(v) for v in gridNames.values())}")
 print(f"Jobs totales: {sum(len(v) for v in processingParamsByTerritory.values())}")
 
-# ── PRUEBA: filtrar solo un tile y año ──────────────────────────
-TEST_TILE = "19JCJ"
-TEST_YEAR = 2020
+# ── FILTRO: 6 tiles, años 2010-2016 ─────────────────────────────
+YEARS_RANGE = list(range(2010, 2017))  # 2010, 2011, ..., 2016
 
 for territory in processingParamsByTerritory:
     processingParamsByTerritory[territory] = [
         p for p in processingParamsByTerritory[territory]
-        if p["grid_name"] == TEST_TILE and p["year"] == TEST_YEAR
+        if p["year"] in YEARS_RANGE
     ]
 
-print(f"MODO PRUEBA: {TEST_TILE} | {TEST_YEAR}")
 print(f"Jobs filtrados: {sum(len(v) for v in processingParamsByTerritory.values())}")
 # ────────────────────────────────────────────────────────────────
-
 # ============================================================================
 # CARGA DE ASSETS GEE
 # ============================================================================
