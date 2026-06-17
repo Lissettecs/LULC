@@ -37,6 +37,22 @@ generacion-muestras-ssl4eo/muestras_finales/**
 !generacion-muestras-ssl4eo/muestras_finales/README.md
 !generacion-muestras-ssl4eo/scripts/README.md
 
+# Datos generados del flujo SSL4EO (versión en inglés)
+ssl4eo-sample-generation/data/**
+ssl4eo-sample-generation/intermediate_files/**
+ssl4eo-sample-generation/final_samples/**
+
+!ssl4eo-sample-generation/data/raw/
+!ssl4eo-sample-generation/data/raw/.gitkeep
+!ssl4eo-sample-generation/intermediate_files/gee_characterization/
+!ssl4eo-sample-generation/intermediate_files/gee_characterization/.gitkeep
+!ssl4eo-sample-generation/intermediate_files/review/
+!ssl4eo-sample-generation/intermediate_files/review/.gitkeep
+!ssl4eo-sample-generation/final_samples/
+!ssl4eo-sample-generation/final_samples/.gitkeep
+!ssl4eo-sample-generation/final_samples/README.md
+!ssl4eo-sample-generation/scripts/README.md
+
 # Archivos geoespaciales y salidas pesadas
 *.tif
 *.tiff
