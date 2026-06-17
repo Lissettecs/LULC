@@ -1,0 +1,21 @@
+name: lulc-muestras
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - geopandas
+  - shapely
+  - pyogrio
+  - fiona
+  - pyproj
+  - plotly
+  - streamlit
+  - pip
+  - pip:
+      - earthengine-api
+      - google-api-python-client
+      - google-auth
+      - google-auth-oauthlib
+      - pip-system-certs
