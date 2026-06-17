@@ -16,10 +16,3 @@ Contiene el flujo de generación, caracterización, selección, revisión y audi
 
 Incluye scripts Python, documentación metodológica, archivos de ambiente y comandos de uso.
 
-## Datos generados
-
-Este repositorio no debe almacenar datos generados pesados o intermedios.
-
-No se deben subir grillas exportadas, shapefiles, GeoJSON, GeoPackage, rasters, ZIP de salida, carpetas de procesamiento ni reportes derivados.
-
-Los datos generados deben mantenerse fuera de Git o en almacenamiento externo.
