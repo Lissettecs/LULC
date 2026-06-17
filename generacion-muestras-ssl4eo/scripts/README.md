@@ -1,10 +1,6 @@
 # Pipeline muestras finales (2×2 / 3×3, scale300)
 
-Ejecutar desde la raíz de `generacion-muestras-ssl4eo/`:
-
-```powershell
-cd LULC/generacion-muestras-ssl4eo
-```
+Ejecutar los comandos desde la raíz de este directorio.
 
 | Paso | Script | Descripción |
 |------|--------|-------------|

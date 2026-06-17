@@ -2,21 +2,7 @@
 
 Flujo de generación, selección, revisión y auditoría de rectángulos de muestreo (2×2 y 3×3, `scale300`) para chips multitemporales SSL4EO-L/Landsat. Diseñado para la clasificación anual de cobertura y uso del suelo de Chile (objetivo 1996–2025), con referencia MapBiomas Chile Collection 2 para 1999–2024.
 
-La implementación operativa vive en `grillas/`; este directorio del repositorio replica los scripts **01–10** y la documentación de ese flujo.
-
-## Ubicación y ejecución
-
-Subcarpeta del repositorio [LULC](https://github.com/Lissettecs/LULC):
-
-```text
-LULC/generacion-muestras-ssl4eo/
-```
-
-Todos los comandos se ejecutan desde esta carpeta. Las rutas relativas las resuelve `scripts/rutas_proyecto.py`. Los datos pesados se excluyen vía `LULC/.gitignore`.
-
-```bash
-cd LULC/generacion-muestras-ssl4eo
-```
+Ejecutar los comandos desde la raíz de este directorio.
 
 ## Pipeline de scripts (01–10)
 
@@ -274,5 +260,3 @@ resumen_revision_por_anio.csv
 ## Notas operativas
 
 Este paquete versiona scripts y documentación, no datos derivados. Los productos se regeneran desde Earth Engine, Drive y los scripts del flujo.
-
-Scripts `11_`–`14_` en `grillas/scripts/` (etiquetas LULC C2, subdivisiones, descarga por tipo) corresponden a etapas posteriores y no forman parte de este paquete.
