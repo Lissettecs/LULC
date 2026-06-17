@@ -21,9 +21,9 @@ Salidas:
   archivos_intermedios/revision/resumen_revision_por_prioridad.csv
   archivos_intermedios/revision/plan_revision_por_rectangulo_anio.csv
 
-Uso desde PowerShell / Cursor:
+Uso desde PowerShell / Cursor (desde la raíz de generacion-muestras-ssl4eo/):
 
-  cd E:\\GEP\\MapBiomas\\COLECCION_3\\MUESTRAS\\grillas
+  cd generacion-muestras-ssl4eo
 
   python scripts\\10_consolidar_plan_revision_nacional.py
 
@@ -42,9 +42,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from rutas_proyecto import GRILLAS_ROOT, REVISION_DIR
 
-DEFAULT_ROOT = Path(r"E:\GEP\MapBiomas\COLECCION_3\MUESTRAS\grillas")
-DEFAULT_REV_DIR = DEFAULT_ROOT / "archivos_intermedios" / "revision"
+DEFAULT_ROOT = GRILLAS_ROOT
+DEFAULT_REV_DIR = REVISION_DIR
 
 DEFAULT_INPUTS = [
     DEFAULT_REV_DIR / "plan_revision_UTM18_scale300.csv",

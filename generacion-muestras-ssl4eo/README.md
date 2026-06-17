@@ -1,223 +1,158 @@
 # Generación de muestras SSL4EO-L para Land Cover Chile
 
-Este repositorio documenta y organiza el flujo de generación, selección, revisión y auditoría de rectángulos de muestreo para la posterior generación de chips multitemporales SSL4EO-L/Landsat. El flujo está diseñado para apoyar la clasificación anual de cobertura y uso del suelo de Chile, con un producto objetivo 1996-2025 y una referencia operativa MapBiomas Chile Collection 2 para 1999-2024.
+Flujo de generación, selección, revisión y auditoría de rectángulos de muestreo (2×2 y 3×3, `scale300`) para chips multitemporales SSL4EO-L/Landsat. Diseñado para la clasificación anual de cobertura y uso del suelo de Chile (objetivo 1996–2025), con referencia MapBiomas Chile Collection 2 para 1999–2024.
 
+La implementación operativa vive en `grillas/`; este directorio del repositorio replica los scripts **01–10** y la documentación de ese flujo.
 
-## Objetivo
+## Ubicación y ejecución
 
-El objetivo de este flujo es construir un conjunto controlado de rectángulos de muestreo que represente la variabilidad espacial, ecológica, temática y temporal del territorio chileno antes de generar chips de entrenamiento. La unidad primaria de diseño es el rectángulo; el chip-año se deriva posteriormente. Esto permite controlar la representatividad por ecorregión, clase dominante, estabilidad temporal, cambio, presencia de clases críticas y partición train/validation/test.
-
-## Principio metodológico
-
-El diseño separa tres niveles de trabajo:
-
-1. **Grilla candidata**: universo de rectángulos posibles, generado por huso UTM y tamaño de rectángulo.
-2. **Rectángulos seleccionados**: subconjunto balanceado y revisable, filtrado por calidad, ecorregión, clase, estabilidad y cambio.
-3. **Chips multitemporales**: unidades finales de entrenamiento derivadas desde los rectángulos aprobados.
-
-Regla central: todos los chips derivados desde un mismo rectángulo deben heredar el mismo split. No se deben mezclar chips del mismo rectángulo entre entrenamiento, validación y prueba, porque eso puede producir fuga espacial y sobreestimar el desempeño del modelo.
-
-## Flujo general
+Subcarpeta del repositorio [LULC](https://github.com/Lissettecs/LULC):
 
 ```text
-Tiles MGRS + huso UTM
-        ↓
-Grilla candidata por tamaño de rectángulo
-        ↓
-Caracterización con MapBiomas, ecorregiones y métricas temporales
-        ↓
-Descarga/compactación de grillas exportadas desde Google Drive
-        ↓
-Selección balanceada de rectángulos
-        ↓
-Revisión, auditoría y visualización de reportes
-        ↓
-Plan de años de revisión por rectángulo
-        ↓
-Consolidación nacional del plan de revisión
-        ↓
-Generación posterior de chips SSL4EO-L
+LULC/generacion-muestras-ssl4eo/
 ```
 
-## Estructura propuesta
+Todos los comandos se ejecutan desde esta carpeta. Las rutas relativas las resuelve `scripts/rutas_proyecto.py`. Los datos pesados se excluyen vía `LULC/.gitignore`.
+
+```bash
+cd LULC/generacion-muestras-ssl4eo
+```
+
+## Pipeline de scripts (01–10)
+
+Referencia rápida. Ejemplos completos en [scripts/README.md](scripts/README.md).
+
+| Paso | Script | Qué hace | Entrada | Salida |
+|------|--------|----------|---------|--------|
+| 01 | `01_caracterizacion_grillas_gee.py` | Caracteriza grillas candidatas en Earth Engine (v3.1) y exporta SHP a Drive | Assets MapBiomas C2, ecorregiones C3, tiles MGRS | Carpeta `GEE_exports` en Drive |
+| 02 | `02_descargar_grillas_drive.py` | Descarga y empaqueta shapefiles desde Drive | `GEE_exports` (prefijos `scale300`) | `archivos_intermedios/gee_caracterizacion/*.zip` |
+| 03 | `03_seleccion_rectangulos.py` | Selección balanceada por 6 tipos de muestra + clases críticas; anti-solape intra-huso y frontera UTM18/UTM19 | ZIP 2×2 (`--homogeneo`) y/o 3×3 (`--mixto`) | `muestras_finales/seleccion_*` y `reservas_*` |
+| 04 | `04_anotar_taxonomia_grillas.py` | Añade columnas taxonomía N1/N2/N3 (requiere IDs nativos C2 nivel 3) | CSV/GPKG de selección | `*_taxonomia_n3.csv` (u otro formato de entrada) |
+| 05 | `05_revision_seleccion_rectangulos.py` | Tablas de revisión e informe de texto | GeoJSON/GPKG de `muestras_finales/` | `archivos_intermedios/revision/` (`01_`–`09_`, `REVISION_COMPLETA*.txt`) |
+| 06 | `06_auditoria_balanceo.py` | Checklist de balanceo nacional vs metas operativas | GeoJSON de selección | `archivos_intermedios/revision/AUDITORIA_BALANCEO.txt` |
+| 07 | `07_visualizar_reportes.py` | Dashboard Streamlit de reportes y mapas | Reportes CSV + geometrías | Vista interactiva o HTML exportado |
+| 08 | — | *Sin script.* El prefijo `08_` identifica tablas de clases críticas generadas por el paso 05 | — | `08_clases_criticas_*`, `08_achaparrado_detalle_*` |
+| 09 | `09_generar_plan_revision_rectangulos.py` | Define `review_years`, regla y prioridad por rectángulo | GeoJSON/GPKG de selección | `plan_revision_UTM*_scale300.csv` |
+| 10 | `10_consolidar_plan_revision_nacional.py` | Fusiona planes UTM18/UTM19 y genera resúmenes | CSV de planes por huso | Plan nacional + tablas resumen en `archivos_intermedios/revision/` |
+
+## Estructura del flujo
 
 ```text
-.
+generacion-muestras-ssl4eo/
 ├── README.md
 ├── requirements.txt
 ├── environment.yml
-├── .gitignore
-├── COMANDOS_GITHUB.md
 ├── scripts/
-│   ├── 01_caracterizacion_grillas_gee.py
-│   ├── 02_descargar_grillas_drive.py
-│   ├── 03_seleccion_rectangulos.py
-│   ├── 04_anotar_taxonomia_grillas.py
-│   ├── 05_revision_seleccion_rectangulos.py
-│   ├── 06_auditoria_balanceo.py
-│   ├── 07_visualizar_reportes.py
-│   ├── 09_generar_plan_revision_rectangulos.py
-│   ├── 10_consolidar_plan_revision_nacional.py
-│   ├── rutas_proyecto.py
-│   ├── taxonomia_clases.py
-│   ├── clases_criticas.py
-│   └── balanceo_seleccion.py
-├── docs/
-│   └── metodologia_grillas_seleccion_ssl4eo.docx
-├── data/
-│   └── raw/
+│   ├── README.md
+│   ├── 01_…10_*.py
+│   └── rutas_proyecto.py, taxonomia_clases.py, clases_criticas.py, balanceo_seleccion.py
 ├── archivos_intermedios/
-│   ├── gee_caracterizacion/
-│   └── revision/
-├── muestras_finales/
-└── reportes_revision/
+│   ├── gee_caracterizacion/    ← ZIPs descargados [02]
+│   └── revision/               ← reportes [05–07], auditoría [06], planes [09–10]
+└── muestras_finales/           ← selección [03–04]
 ```
 
-Los directorios `data/`, `archivos_intermedios/`, `muestras_finales/` y `reportes_revision/` se dejan preparados para el flujo operativo, pero los archivos pesados derivados de Earth Engine, shapefiles, GeoPackage, GeoJSON, CSV de resultados y reportes no se versionan por defecto. Para compartir productos pesados se recomienda usar almacenamiento externo o Git LFS, no commits directos al repositorio principal.
+## Principio metodológico
 
-## Insumos principales
+1. **Grilla candidata** — universo de rectángulos por huso UTM y tamaño (2×2 homogéneo, 3×3 mixto).
+2. **Rectángulos seleccionados** — subconjunto balanceado (~300–350 nacional) filtrado por calidad, ecorregión, clase, estabilidad y cambio.
+3. **Chips multitemporales** — unidades finales derivadas de rectángulos aprobados.
 
-El flujo depende de tres insumos espaciales principales en Google Earth Engine:
+Regla central: todos los chips de un mismo rectángulo heredan el mismo `split` (train/val/test). El script 03 asigna split a nivel de `grid_id` con estratificación por cluster espacial para evitar fuga.
 
-| Insumo | Uso |
+## Insumos en Earth Engine (script 01)
+
+| Asset | Ruta GEE |
 |---|---|
-| MapBiomas Chile Collection 2 | Clase dominante, clase reciente, estabilidad, cambio y presencia de clases críticas para 1999-2024. |
-| Ecorregiones Collection 3 | Estratificación ecológica y ecorregión dominante de cada rectángulo. |
-| Tiles MGRS Sentinel Chile | Organización espacial por tile y derivación del huso UTM. |
+| MapBiomas Chile C2 | `projects/mapbiomas-chile/assets/LULC/COLLECTION-02/CLASSIFICATIONS/classification-final/clasificacion-final-4` |
+| Ecorregiones C3 | `projects/mapbiomas-chile/assets/LULC/COLLECTION-03/ANCILLARY_DATA/ECORREGIONES_RASTER/ecorregiones_col3_30m` |
+| Tiles MGRS Chile | `projects/mapbiomas-chile/assets/LULC/COLLECTION-03/ANCILLARY_DATA/Tiles_Chile_Sentinel` |
 
-El producto final apunta al periodo 1996-2025, pero la caracterización preliminar de grillas usa la serie MapBiomas disponible 1999-2024. Los años 1996-1998 y 2025 deben tratarse en la etapa posterior mediante revisión/anclaje temporal o extrapolación cautelosa, no como verdad automática derivada de la referencia 1999-2024.
+Periodos de caracterización: P1 (1999–2005), P2 (2006–2012), P3 (2013–2018), P4 (2019–2024).
 
-## Sistemas de referencia
+Parámetros clave del script 01:
 
-La grilla se genera por huso UTM Sur con EPSG explícitos:
+- `--project mapbiomas-chile` (proyecto GCP por defecto)
+- `--class-level n3` — IDs nativos C2 nivel 3 (recomendado; el sufijo de export es `_n3`)
+- `--stats-scale 300` — escala de reducción estadística
+- `--rect-side 2` (homogéneo) o `3` (mixto)
+- `--utm 18` o `19` (también 12, 17 para islas)
+- `--run-scale300-all --wait --download` — las 4 corridas + espera + descarga automática
 
-| Huso | EPSG | Uso esperado |
-|---|---:|---|
-| 12S | EPSG:32712 | Isla de Pascua |
-| 17S | EPSG:32717 | Archipiélago Juan Fernández |
-| 18S | EPSG:32718 | Chile continental occidental/norte-centro |
-| 19S | EPSG:32719 | Chile continental centro-sur, sur y Patagonia |
+## Tipos de muestra (script 03)
 
-La ejecución por lotes por huso es preferible a una ejecución nacional única, porque reduce errores de memoria y facilita el control de solapes en zonas de frontera entre husos.
+Seis tipos esenciales (dimensión temporal × espacial):
 
-## Tamaños de rectángulos
-
-El tamaño base considera chips SSL4EO-L/Landsat de 264 × 264 píxeles. Con píxel Landsat de 30 m, cada chip cubre aproximadamente 7,92 km por lado.
-
-| Tipo operativo | Chips por lado | Dimensión aproximada | Uso |
-|---|---:|---:|---|
-| Homogéneo/reducido | 2 × 2 | 15,84 × 15,84 km | Zonas fragmentadas, costeras, clases raras y muestras homogéneas. |
-| Mixto/estándar | 3 × 3 | 23,76 × 23,76 km | Muestreo general y contexto espacial mixto. |
-| Ampliado | 4 × 4 | 31,68 × 31,68 km | Paisajes extensos y homogéneos; no forma parte del set principal actual si no se ejecuta explícitamente. |
-
-La grilla candidata se genera sin solape. El solape, si se usa, debe incorporarse después en la generación de chips y mantenerse dentro del mismo split del rectángulo padre.
-
-## Tipos de muestra usados en la selección
-
-El script de selección organiza los rectángulos según dimensión temporal y espacial:
-
-| Tipo | Dimensión temporal | Dimensión espacial | Descripción |
+| `sample_type` | Temporal | Espacial | Criterio resumido |
 |---|---|---|---|
-| `estable_homogenea` | Estable | Homogénea | Firma relativamente pura y persistente. |
-| `estable_simple_media` | Estable | Simple/media | Mosaico estable con pocas clases. |
-| `anual_homogenea` | Anual | Homogénea | Clase pura en un año de referencia. |
-| `anual_simple_media` | Anual | Simple/media | Dinámica anual en contexto espacial real. |
-| `transicion_homogenea` | Transición | Homogénea | Cambio temporal entre clases dominantes relativamente puras. |
-| `transicion_simple_media` | Transición | Simple/media | Cambio temporal en contexto mixto. |
+| `estable_homogenea` | Estable | Homogénea | `mode_pct ≥ 85`, racha estable ≥ 5 años |
+| `estable_simple_media` | Estable | Simple/media | Mosaico estable 2–4 clases |
+| `anual_homogenea` | Anual | Homogénea | Clase pura en un `ref_year` |
+| `anual_simple_media` | Anual | Simple/media | Dinámica anual en contexto mixto |
+| `transicion_homogenea` | Transición | Homogénea | Cambio entre clases dominantes puras |
+| `transicion_simple_media` | Transición | Simple/media | Cambio en contexto mixto |
 
-También se consideran pools dedicados para clases críticas o raras, como arena/playa/duna, salar, bosque achaparrado, bosque norte y pastizal, dependiendo de los parámetros activos.
+Además, pools dedicados para clases críticas: arena/playa/duna (23), salar (61), bosque achaparrado (67), bosque norte y pastizal. Las clases transversales (humedal, urbano, agro fina, etc.) se excluyen del modelo general y se reservan para modelos especializados.
 
-## Scripts incluidos
+Perfil `scale300`: meta nacional **300–350** rectángulos (~138 UTM18 + ~192 UTM19).
 
-| Script | Función principal | Entradas esperadas | Salidas esperadas |
-|---|---|---|---|
-| `01_caracterizacion_grillas_gee.py` | Genera y caracteriza grillas candidatas en Earth Engine. | Assets de MapBiomas, ecorregiones, MGRS; parámetros UTM, tamaño y escala. | Exportaciones a Google Drive. |
-| `02_descargar_grillas_drive.py` | Descarga y empaqueta shapefiles exportados desde Drive. | Carpeta `GEE_exports` o prefijos específicos. | ZIPs de grillas en `archivos_intermedios/gee_caracterizacion/`. |
-| `03_seleccion_rectangulos.py` | Selecciona rectángulos balanceados por tipo, ecorregión, clase, estabilidad y cambio. | ZIP/SHP homogéneo 2×2 y/o mixto 3×3. | GPKG, GeoJSON, CSV y shapefile en `muestras_finales/`. |
-| `04_anotar_taxonomia_grillas.py` | Añade columnas de taxonomía N1/N2/N3 a grillas o selecciones. | CSV/GPKG/GeoJSON con `mode_id` o `lulc_mode_id`. | Archivo anotado con taxonomía. |
-| `05_revision_seleccion_rectangulos.py` | Genera reportes de revisión de la selección. | Selecciones finales GeoJSON/GPKG. | CSVs de resumen e informe TXT. |
-| `06_auditoria_balanceo.py` | Audita balance nacional contra metas operativas. | Selecciones UTM18/UTM19. | Informe `AUDITORIA_BALANCEO.txt`. |
-| `07_visualizar_reportes.py` | Visualiza reportes en Streamlit. | Reportes CSV y selecciones GeoJSON. | Dashboard local interactivo. |
-| `09_generar_plan_revision_rectangulos.py` | Define años de revisión por rectángulo. | Selección final GeoJSON/GPKG. | CSV con `review_years`, regla y prioridad. |
-| `10_consolidar_plan_revision_nacional.py` | Consolida planes UTM18 y UTM19. | Planes de revisión por huso. | Plan nacional y resúmenes por año/tipo/regla/prioridad. |
+## Muestras finales
+
+Set operativo: **330 rectángulos** sin solape geométrico. Convenciones de archivos en [muestras_finales/README.md](muestras_finales/README.md).
+
+Salidas típicas del script 03 (por huso):
+
+```text
+muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300.geojson
+muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300.gpkg
+muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300.csv
+muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300_shp/
+muestras_finales/reservas_grilla_ssl4eo_muestras_UTM19_scale300.csv   ← suplentes
+```
+
+Tras el script 04:
+
+```text
+muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM*_scale300_taxonomia_n3.csv
+```
 
 ## Dependencias
 
-Instalación mínima con `pip`:
-
 ```bash
-python -m venv .venv
-source .venv/bin/activate      # Linux/macOS
-# .venv\Scripts\activate       # Windows PowerShell
+python -m venv .venv && .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
+# o: mamba env create -f environment.yml && mamba activate lulc-muestras
 ```
 
-En entornos con geoespacial complejo, se recomienda Conda/Mamba:
+Módulos auxiliares: `rutas_proyecto.py`, `taxonomia_clases.py`, `clases_criticas.py`, `balanceo_seleccion.py`.
 
-```bash
-mamba env create -f environment.yml
-mamba activate lulc-muestras
-```
+## Flujo de ejecución
 
-Módulos auxiliares incluidos en `scripts/`:
-
-```text
-rutas_proyecto.py
-taxonomia_clases.py
-clases_criticas.py
-balanceo_seleccion.py
-```
-
-Estos módulos concentran rutas del proyecto, taxonomía N1/N2/N3, definición de clases críticas y utilidades de balanceo. Se mantienen junto a los scripts para que las importaciones funcionen al ejecutar el flujo desde la raíz del repositorio.
-
-## Configuración inicial de Earth Engine
-
-Autenticación inicial:
+### 01 — Caracterizar grillas en GEE
 
 ```bash
 python scripts/01_caracterizacion_grillas_gee.py --authenticate
-```
-
-Ejecución base para el proyecto MapBiomas Chile:
-
-```bash
-python scripts/01_caracterizacion_grillas_gee.py --project mapbiomas-chile --utm 18 --rect-side 2 --stats-scale 300
-```
-
-## Flujo de ejecución recomendado
-
-### 1. Caracterizar grillas candidatas
-
-Ejecutar las cuatro combinaciones principales `scale300`:
-
-```bash
-python scripts/01_caracterizacion_grillas_gee.py --utm 18 --rect-side 2 --stats-scale 300
+python scripts/01_caracterizacion_grillas_gee.py --project mapbiomas-chile --utm 18 --rect-side 2 --stats-scale 300 --class-level n3
 python scripts/01_caracterizacion_grillas_gee.py --utm 18 --rect-side 3 --stats-scale 300
 python scripts/01_caracterizacion_grillas_gee.py --utm 19 --rect-side 2 --stats-scale 300
 python scripts/01_caracterizacion_grillas_gee.py --utm 19 --rect-side 3 --stats-scale 300
 ```
 
-También se puede usar el modo integrado:
+Integrado (export + espera + descarga):
 
 ```bash
 python scripts/01_caracterizacion_grillas_gee.py --run-scale300-all --wait --download
 ```
 
-### 2. Descargar grillas exportadas desde Drive
+### 02 — Descargar desde Drive
 
 ```bash
 python scripts/02_descargar_grillas_drive.py --scale300-all
 ```
 
-La salida esperada son ZIPs de shapefile en:
+Descarga los 4 ZIP con prefijos `homogeneo_2x2` y `mixto_3x3` para UTM18 y UTM19. Usa el token OAuth de Earth Engine (scope Drive).
 
-```text
-archivos_intermedios/gee_caracterizacion/
-```
-
-### 3. Seleccionar rectángulos por huso
-
-Ejemplo UTM18:
+### 03 — Seleccionar rectángulos
 
 ```bash
 python scripts/03_seleccion_rectangulos.py \
@@ -225,53 +160,87 @@ python scripts/03_seleccion_rectangulos.py \
   --mixto archivos_intermedios/gee_caracterizacion/grilla_ssl4eo_muestras_mixto_3x3_UTM18_scale300_n3.zip
 ```
 
-Ejemplo UTM19:
+Flags relevantes:
+
+- `--no-auto-previous` — no reutiliza selecciones previas del mismo huso como restricción de solape
+- `--previous archivo.geojson` — excluye rectángulos ya seleccionados
+- `--max-overlap 0.0` — tolerancia de solape (por defecto cero)
+
+Repetir para UTM19. Por defecto también evita solapes con selección del otro huso en zona de frontera.
+
+### 04 — Anotar taxonomía N3
 
 ```bash
-python scripts/03_seleccion_rectangulos.py \
-  --homogeneo archivos_intermedios/gee_caracterizacion/grilla_ssl4eo_muestras_homogeneo_2x2_UTM19_scale300_n3.zip \
-  --mixto archivos_intermedios/gee_caracterizacion/grilla_ssl4eo_muestras_mixto_3x3_UTM19_scale300_n3.zip
+python scripts/04_anotar_taxonomia_grillas.py \
+  -i muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM19_scale300.csv
 ```
 
-Los productos se guardan en `muestras_finales/`.
-
-### 4. Revisar selección
+### 05 — Generar reportes de revisión
 
 ```bash
 python scripts/05_revision_seleccion_rectangulos.py --utm 18 19
 ```
 
-Esto genera tablas de resumen y un informe de texto con distribución por tipo de muestra, ecorregión, clase modal, clases críticas, split y tier de revisión.
+Produce, por huso y combinado:
 
-### 5. Auditar balance nacional
+| Prefijo | Contenido |
+|---|---|
+| `01_resumen_general` | Totales, split, tiers, calidad media |
+| `02_por_tipo_muestra` | Conteos por `sample_type` |
+| `03_eco_x_clase_*` | Ecorregión × clase modal |
+| `04_eco_x_tipo_*` | Ecorregión × tipo de muestra |
+| `05_clase_x_tipo_*` | Clase modal × tipo |
+| `06_grid_mode_x_tipo` | Modo de grilla × tipo |
+| `07_split_x_tipo` | Split × tipo |
+| `08_clases_criticas_*` | Resumen y detalle de clases críticas |
+| `08_achaparrado_detalle` | Detalle bosque achaparrado |
+| `09_calidad_por_tipo` | Métricas de calidad por tipo |
+| `REVISION_COMPLETA*.txt` | Informe de texto consolidado |
+
+### 06 — Auditar balanceo
 
 ```bash
 python scripts/06_auditoria_balanceo.py
 ```
 
-La auditoría revisa metas de número total de muestras, balance UTM18/UTM19, clases críticas, split train/val/test y solapes entre husos.
+Verifica 14 criterios, entre ellos:
 
-### 6. Visualizar reportes
+- Total nacional 300–350
+- Balance UTM18 (~100–130) / UTM19 (~140–180)
+- Estables, transiciones homogéneas, ecorregiones prioritarias (E7, E8, E9, E12, E15)
+- Cupos de arena, salar, pastizal, bosque norte
+- Split ~70/15/15 y solape cero entre husos
+
+### 07 — Visualizar reportes
 
 ```bash
 streamlit run scripts/07_visualizar_reportes.py
+python scripts/07_visualizar_reportes.py --export-html revision_dashboard.html
 ```
 
-El visor permite revisar métricas generales, distribución por ecorregión/clase, tipos de muestra, clases críticas, calidad y geometrías de selección.
+Lee `archivos_intermedios/revision/`, geometrías de `muestras_finales/` y puede superponer chips 1×1 (opcional).
 
-### 7. Generar plan de revisión por rectángulo
+### 09 — Plan de revisión por rectángulo
 
 ```bash
 python scripts/09_generar_plan_revision_rectangulos.py \
-  --input muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300.geojson \
-  --output archivos_intermedios/revision/plan_revision_UTM18_scale300.csv
-
-python scripts/09_generar_plan_revision_rectangulos.py \
-  --input muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM19_scale300.geojson \
-  --output archivos_intermedios/revision/plan_revision_UTM19_scale300.csv
+  -i muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300.geojson \
+  -o archivos_intermedios/revision/plan_revision_UTM18_scale300.csv
 ```
 
-### 8. Consolidar plan nacional
+Reglas de `review_rule` asignadas según `dim_temporal`:
+
+| Regla | Cuándo aplica | Años típicos |
+|---|---|---|
+| `estable_anclas_temporales` | Rectángulos estables | 1999, 2013, 2024 (o años estables más cercanos) |
+| `anual_ref_year` | Tipos anuales | `ref_year` del rectángulo |
+| `transicion_cambio_modal_entre_periodos` | Cambio de clase modal entre P1–P4 | Ventanas en límites de periodo |
+| `transicion_anios_no_estables` | Años no estables respecto al modo | Ventanas ±1 año |
+| `transicion_sin_anio_exacto_usar_anclas` | Fallback de transición | Anclas 1999, 2013, 2024 |
+
+Campos de salida: `review_years`, `n_review_years`, `review_rule`, `review_priority`, `review_notes`.
+
+### 10 — Consolidar plan nacional
 
 ```bash
 python scripts/10_consolidar_plan_revision_nacional.py \
@@ -280,74 +249,30 @@ python scripts/10_consolidar_plan_revision_nacional.py \
   --out-dir archivos_intermedios/revision
 ```
 
-## Criterios de revisión temporal
-
-El plan de revisión usa distintas reglas según el tipo de rectángulo:
-
-| Tipo | Años sugeridos |
-|---|---|
-| Estable | Años ancla, típicamente inicio, periodo medio y año reciente. |
-| Anual | Año de referencia asignado por `ref_year`. |
-| Transición | Ventanas alrededor de cambios entre periodos o años no estables. |
-| Clase rara | Años con presencia probable o confirmada de la clase objetivo. |
-
-La revisión manual debe concentrarse en años ancla y casos críticos. La inferencia final puede generar chip-año para todos los años, pero no todos requieren revisión manual exhaustiva.
-
-## Salidas esperadas
-
-Productos principales:
+Salidas adicionales:
 
 ```text
-muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300.geojson
-muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM19_scale300.geojson
-muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM18_scale300.csv
-muestras_finales/seleccion_grilla_ssl4eo_muestras_UTM19_scale300.csv
-archivos_intermedios/revision/plan_revision_UTM18_scale300.csv
-archivos_intermedios/revision/plan_revision_UTM19_scale300.csv
-archivos_intermedios/revision/plan_revision_nacional_scale300.csv
-archivos_intermedios/revision/listado_revision_manual.csv
-```
-
-Reportes principales:
-
-```text
-reportes_revision/REVISION_COMPLETA.txt
-reportes_revision/AUDITORIA_BALANCEO.txt
-reportes_revision/01_resumen_general.csv
-reportes_revision/02_por_tipo_muestra.csv
-reportes_revision/08_clases_criticas_resumen.csv
-reportes_revision/09_calidad_por_tipo.csv
+plan_revision_nacional_scale300.csv
+listado_revision_manual.csv
+plan_revision_por_rectangulo_anio.csv
+resumen_revision_por_utm.csv
+resumen_revision_por_tipo.csv
+resumen_revision_por_regla.csv
+resumen_revision_por_prioridad.csv
+resumen_revision_por_anio.csv
 ```
 
 ## Control de calidad mínimo
 
-Antes de generar chips se debe comprobar:
-
-- No hay solape entre rectángulos seleccionados de UTM18 y UTM19.
-- Cada `grid_id` es único en el plan nacional.
-- El split se asignó a nivel de rectángulo.
-- Las clases críticas tienen representación suficiente.
-- Las ecorregiones prioritarias no quedaron subrepresentadas.
-- Los rectángulos con `review_priority` alta tienen años de revisión asignados.
-- Los archivos pesados no fueron añadidos accidentalmente al repositorio.
-
-## Convenciones de nombres
-
-Rama sugerida:
-
-```text
-generacion-muestras-ssl4eo
-```
-
-Commit sugerido:
-
-```text
-Agregar flujo de generacion de muestras SSL4EO
-```
-
-Los nombres de ramas y commits se escriben sin tildes para evitar problemas de codificación en terminales remotas.
+- Solape cero entre UTM18 y UTM19 (script 06, criterio [14]).
+- `grid_id` único en plan nacional (script 10, `validate_outputs`).
+- Split asignado a nivel de rectángulo, no de chip-año.
+- Clases críticas y ecorregiones prioritarias dentro de metas.
+- Rectángulos con `review_priority` baja revisados en años ancla.
+- Sin archivos pesados en el repositorio Git.
 
 ## Notas operativas
 
-Este paquete sube scripts y documentación, no datos pesados. Los productos intermedios y finales deben regenerarse desde Earth Engine, Drive y los scripts del flujo. Si se decide versionar selecciones finales livianas, revisar primero tamaño y sensibilidad metodológica antes de hacer commit.
+Este paquete versiona scripts y documentación, no datos derivados. Los productos se regeneran desde Earth Engine, Drive y los scripts del flujo.
 
+Scripts `11_`–`14_` en `grillas/scripts/` (etiquetas LULC C2, subdivisiones, descarga por tipo) corresponden a etapas posteriores y no forman parte de este paquete.
