@@ -2,30 +2,6 @@
 
 Este repositorio documenta y organiza el flujo de generación, selección, revisión y auditoría de rectángulos de muestreo para la posterior generación de chips multitemporales SSL4EO-L/Landsat. El flujo está diseñado para apoyar la clasificación anual de cobertura y uso del suelo de Chile, con un producto objetivo 1996-2025 y una referencia operativa MapBiomas Chile Collection 2 para 1999-2024.
 
-La rama sugerida para incorporar este material es:
-
-```bash
-generacion-muestras-ssl4eo
-```
-
-Se evita usar espacios o tildes en el nombre de la rama para reducir problemas con Git, terminales remotas y herramientas de integración continua. Una alternativa válida sería `feature/generacion-muestras`.
-
-
-## Trabajo local en PC
-
-Este repositorio está preparado para ejecutarse desde un computador local con Windows, usando PowerShell, Git Bash, Cursor o VS Code. No es necesario trabajar desde el cluster para subir los archivos a GitHub.
-
-Flujo recomendado:
-
-```bash
-git clone https://github.com/Lissettecs/LULC.git
-cd LULC
-git switch main
-git pull origin main
-git switch -c generacion-muestras-ssl4eo
-```
-
-Luego se copia el contenido de este paquete dentro de la carpeta local `LULC/`, se revisa con `git status -sb`, se confirma con `git commit` y se sube con `git push -u origin generacion-muestras-ssl4eo`.
 
 ## Objetivo
 
