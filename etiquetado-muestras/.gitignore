@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env/
+.ipynb_checkpoints/
+
+# Data / outputs
+*.tif
+*.tiff
+*.gpkg
+*.geojson
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.csv
+!examples/*.csv
+!docs/*.csv
+
+# Logs
+*.log
+logs/
