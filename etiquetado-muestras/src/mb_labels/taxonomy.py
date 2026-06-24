@@ -51,6 +51,28 @@ _TAXONOMY: dict[int, tuple] = {
 NIVEL3_CLASS_IDS = list(_TAXONOMY.keys())
 TRANSVERSAL_N3_IDS = [k for k, v in _TAXONOMY.items() if v[7]]
 CRITICAL_N3_IDS = [k for k, v in _TAXONOMY.items() if v[8]]
+# Modal transversal del rectangulo (modelos especializados SSL4EO).
+TRANSVERSAL_MODAL_IDS = sorted(set(TRANSVERSAL_N3_IDS) | {14})
+TRANSVERSAL_MODAL_PROXY = (10, 22)
+TRANSVERSAL_PROXY_MIN_PCT = 25.0
+
+
+def is_transversal_rectangle(rect_row) -> bool:
+    """True si el rectangulo esta reservado para revision de clase modal transversal."""
+    try:
+        mode = int(float(rect_row.get("lulc_mode_id", -9999)))
+    except (TypeError, ValueError):
+        mode = -9999
+    if mode in TRANSVERSAL_MODAL_IDS:
+        return True
+    if mode in TRANSVERSAL_MODAL_PROXY and "transversal_pct" in rect_row.index:
+        try:
+            pct = float(rect_row.get("transversal_pct", 0) or 0)
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct >= TRANSVERSAL_PROXY_MIN_PCT:
+            return True
+    return False
 
 
 def lookup_taxonomy(class_id: int | str) -> dict[str, str | int | bool]:
