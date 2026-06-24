@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Extrae cada rectángulo del raster anual C2, aplica filtro sieve para eliminar
-parches pequeños (ruido sal-y-pimienta) y guarda el clip como GeoTIFF en la
-CRS nativa UTM del rectángulo.
+Extrae rectángulos del raster anual C2, aplica filtro sieve y guarda un mosaico
+por año y zona UTM (todos los rectángulos del grupo en un solo GeoTIFF).
 
 Salida en prod/labels/raster/{grupo}/{zona}/:
-  annual/UTM18/{grid_id}_{year}.tif   — proyección EPSG:32718
-  annual/UTM19/{grid_id}_{year}.tif   — proyección EPSG:32719
+  annual/UTM18/{year}.tif   — proyección EPSG:32718
+  annual/UTM19/{year}.tif   — proyección EPSG:32719
 
 El sieve se aplica ANTES de reproyectar para respetar el tamaño de píxel
 original del raster fuente.
@@ -16,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from pathlib import Path
 
 import geopandas as gpd
@@ -24,6 +24,7 @@ import pandas as pd
 import rasterio
 from rasterio.features import sieve
 from rasterio.mask import mask as raster_mask
+from rasterio.merge import merge
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 from shapely.geometry import mapping
 from tqdm import tqdm
@@ -51,6 +52,7 @@ GROUP_FOLDER_MAP = {
     "transiciones": "transition",
     "clases_raras": "rare_classes",
 }
+GROUP_MAP = {"anual": "anuales", "estable": "estables", "transicion": "transiciones"}
 
 
 def parse_years(value) -> list[int]:
@@ -91,12 +93,24 @@ def read_rectangles_by_zone(samples_dir: Path) -> dict[str, gpd.GeoDataFrame]:
     return result
 
 
-def build_work(samples_dir: Path, plan_name: str, grid_zone: dict[str, str]) -> pd.DataFrame:
-    """Expande el plan a pares únicos (grid_id, review_year)."""
+def build_work(
+    samples_dir: Path,
+    plan_name: str,
+    grid_zone: dict[str, str],
+    label_group: str | None = None,
+) -> pd.DataFrame:
+    """Expande el plan a pares únicos (grid_id, review_year), opcionalmente filtrados por grupo."""
     plan = pd.read_csv(resolve_plan_path(samples_dir, plan_name), encoding="utf-8-sig")
     plan["grid_id"] = plan["grid_id"].astype(str)
     rows = []
     for _, row in plan.iterrows():
+        if label_group == "clases_raras":
+            if not str(row.get("target_rare_class", "")).strip():
+                continue
+        else:
+            temporal_group = GROUP_MAP.get(str(row.get("dim_temporal", "")).lower().strip(), "otros")
+            if label_group and temporal_group != label_group:
+                continue
         for year in parse_years(row["review_years"]):
             rows.append({"grid_id": str(row["grid_id"]), "review_year": int(year)})
     work = pd.DataFrame(rows).drop_duplicates().reset_index(drop=True)
@@ -158,6 +172,70 @@ def extract_and_sieve(
     return dst_data, dst_transform
 
 
+def clip_profile(data: np.ndarray, transform, crs: str) -> dict:
+    return {
+        "driver": "GTiff",
+        "dtype": "int32",
+        "crs": crs,
+        "transform": transform,
+        "width": data.shape[1],
+        "height": data.shape[0],
+        "count": 1,
+        "nodata": 0,
+    }
+
+
+def write_clip_temp(
+    data: np.ndarray,
+    transform,
+    zone_crs: str,
+    path: Path,
+) -> None:
+    with rasterio.open(path, "w", **clip_profile(data, transform, zone_crs)) as ds:
+        ds.write(data, 1)
+
+
+def merge_clip_paths(clip_paths: list[Path], zone_crs: str, out_path: Path) -> bool:
+    """Combina clips sieved en disco en un único GeoTIFF por año."""
+    if not clip_paths:
+        return False
+
+    datasets = []
+    try:
+        for clip_path in clip_paths:
+            datasets.append(rasterio.open(clip_path))
+        mosaic, out_transform = merge(datasets, nodata=0)
+        profile = {
+            "driver": "GTiff",
+            "dtype": "int32",
+            "crs": zone_crs,
+            "transform": out_transform,
+            "width": mosaic.shape[2],
+            "height": mosaic.shape[1],
+            "count": 1,
+            "nodata": 0,
+            "compress": "lzw",
+            "tiled": False,
+        }
+        with rasterio.open(out_path, "w", **profile) as dst:
+            dst.write(mosaic[0], 1)
+        return True
+    finally:
+        for ds in datasets:
+            ds.close()
+
+
+def remove_legacy_clip_files(out_dir: Path, year: int) -> int:
+    """Elimina clips por rectángulo ({grid_id}_{year}.tif) al migrar a {year}.tif."""
+    removed = 0
+    for old in out_dir.glob(f"*_{year}.tif"):
+        if old.stem == str(year):
+            continue
+        old.unlink()
+        removed += 1
+    return removed
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Extrae rectángulos con filtro sieve, separados por zona UTM."
@@ -199,7 +277,7 @@ def main() -> int:
         for zone, gdf in rects_by_zone.items()
         for gid in gdf["grid_id"]
     }
-    work = build_work(args.samples_dir, args.plan_name, grid_zone)
+    work = build_work(args.samples_dir, args.plan_name, grid_zone, label_group=args.label_group)
 
     if args.only_years:
         work = work[work["review_year"].isin(args.only_years)].copy()
@@ -208,67 +286,68 @@ def main() -> int:
     if args.max_rows:
         work = work.head(args.max_rows).copy()
 
-    print(f"\nPares a procesar: {len(work)}")
+    print(f"\nPares a procesar ({args.label_group}): {len(work)}")
     print(work["utm_zone"].value_counts().to_string())
+    print("Años únicos:", sorted(work["review_year"].unique()))
 
     group_folder = GROUP_FOLDER_MAP.get(args.label_group, args.label_group)
     out_base = args.labels_dir / "raster" / group_folder
     for zone in rects_by_zone:
         (out_base / zone).mkdir(parents=True, exist_ok=True)
 
-    n_written = n_skip = n_empty = 0
+    n_written = n_skip = n_empty = n_legacy_removed = 0
 
-    for year, sub_year in work.groupby("review_year", sort=True):
+    for (zone, year), sub_year in work.groupby(["utm_zone", "review_year"], sort=True):
+        out_dir = out_base / zone
+        out_path = out_dir / f"{year}.tif"
+
+        if out_path.exists() and not args.overwrite:
+            n_skip += 1
+            continue
+
         raster_path = args.landcover_dir / args.raster_template.format(year=int(year))
         if not raster_path.exists():
             print(f"ADVERTENCIA: no existe raster para año {year}: {raster_path}")
             continue
-        print(f"\nAño {year}: {len(sub_year)} rectángulos | {raster_path.name}")
 
-        with rasterio.open(raster_path) as src:
-            for _, row in tqdm(sub_year.iterrows(), total=len(sub_year), desc=f"año {year}"):
-                zone = row["utm_zone"]   # "UTM18" o "UTM19"
-                gid = row["grid_id"]
-                out_path = out_base / zone / f"{gid}_{year}.tif"
+        zone_crs = UTM_CRS[zone]
+        print(f"\nAño {year} / {zone}: {len(sub_year)} rectángulos | {raster_path.name}")
 
-                if out_path.exists() and not args.overwrite:
-                    n_skip += 1
-                    continue
+        with tempfile.TemporaryDirectory(prefix=f"sieve_{zone}_{year}_") as tmp:
+            clip_paths: list[Path] = []
+            with rasterio.open(raster_path) as src:
+                for _, row in tqdm(sub_year.iterrows(), total=len(sub_year), desc=f"{zone} {year}"):
+                    gid = row["grid_id"]
+                    geom_utm = rects_by_zone[zone].set_index("grid_id").loc[gid, "geometry"]
+                    geom_raster = (
+                        gpd.GeoDataFrame([{"geometry": geom_utm}], crs=zone_crs)
+                        .to_crs(src.crs)
+                        .geometry.iloc[0]
+                    )
 
-                zone_crs = UTM_CRS[zone]
-                geom_utm = rects_by_zone[zone].set_index("grid_id").loc[gid, "geometry"]
-                geom_raster = (
-                    gpd.GeoDataFrame([{"geometry": geom_utm}], crs=zone_crs)
-                    .to_crs(src.crs)
-                    .geometry.iloc[0]
-                )
+                    result = extract_and_sieve(
+                        src, geom_raster, zone_crs,
+                        sieve_size=args.sieve_size, nodata=0,
+                    )
+                    if result is None:
+                        n_empty += 1
+                        continue
 
-                result = extract_and_sieve(
-                    src, geom_raster, zone_crs,
-                    sieve_size=args.sieve_size, nodata=0,
-                )
-                if result is None:
-                    n_empty += 1
-                    continue
+                    clip_path = Path(tmp) / f"clip_{len(clip_paths):04d}.tif"
+                    write_clip_temp(result[0], result[1], zone_crs, clip_path)
+                    clip_paths.append(clip_path)
 
-                dst_data, dst_transform = result
-                profile = {
-                    "driver": "GTiff",
-                    "dtype": "int32",
-                    "crs": zone_crs,
-                    "transform": dst_transform,
-                    "width": dst_data.shape[1],
-                    "height": dst_data.shape[0],
-                    "count": 1,
-                    "nodata": 0,
-                    "compress": "lzw",
-                    "tiled": False,
-                }
-                with rasterio.open(out_path, "w", **profile) as dst:
-                    dst.write(dst_data, 1)
-                n_written += 1
+            if not merge_clip_paths(clip_paths, zone_crs, out_path):
+                continue
 
-    print(f"\nResultado: escritos={n_written} | saltados={n_skip} | vacíos={n_empty}")
+        n_written += 1
+        if args.overwrite:
+            n_legacy_removed += remove_legacy_clip_files(out_dir, int(year))
+
+    print(
+        f"\nResultado: mosaicos={n_written} | saltados={n_skip} | "
+        f"rect_vacíos={n_empty} | legacy_eliminados={n_legacy_removed}"
+    )
     return 0
 
 

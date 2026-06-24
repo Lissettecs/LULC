@@ -1,161 +1,94 @@
 # MapBiomas C2 Labels Cluster
 
-Repositorio para generar **rectángulos etiquetados** y **GeoPackages de subdivisiones** usando los landcovers de **MapBiomas Chile Collection 2** disponibles como GeoTIFF en cluster.
+Generación de **mosaicos raster sieved** y **GeoPackages de etiquetas** desde landcover MapBiomas Chile Collection 2 (GeoTIFF en cluster).
 
-El flujo está pensado para el proyecto SSL4EO-L / MapBiomas Chile Collection 3. Los GeoPackages se generan en la **CRS nativa UTM** de cada rectángulo (EPSG:32718 o EPSG:32719), coherente con la proyección usada por SSL4EO-L.
-
-## Entradas esperadas en el cluster
-
-```text
-/home/lserey/mapbiomas_land/
-├── prod/
-│   └── samples/
-│       ├── final_samples/
-│       │   ├── UTM18/
-│       │   │   ├── homogeneo_2x2/
-│       │   │   │   └── seleccion_grilla_ssl4eo_muestras_homogeneo_2x2_UTM18_scale300.geojson
-│       │   │   └── mixto_3x3/
-│       │   │       └── seleccion_grilla_ssl4eo_muestras_mixto_3x3_UTM18_scale300.geojson
-│       │   └── UTM19/
-│       │       ├── homogeneo_2x2/
-│       │       │   └── seleccion_grilla_ssl4eo_muestras_homogeneo_2x2_UTM19_scale300.geojson
-│       │       └── mixto_3x3/
-│       │           └── seleccion_grilla_ssl4eo_muestras_mixto_3x3_UTM19_scale300.geojson
-│       └── intermediate_files/
-│           └── review/
-│               └── listado_revision_manual.csv
-└── ancillary_data/
-    └── landcover_col2/
-        ├── classification_1999.tif
-        ├── classification_2000.tif
-        ├── ...
-        └── classification_2024.tif
-```
-
-Los GeoJSON de selección son descubiertos automáticamente por `discover_selection_geojsons()` en `src/mb_labels/sample_paths.py`. El script combina `homogeneo_2x2` y `mixto_3x3` de cada zona UTM antes de procesar.
+Pipeline en dos pasos por **grupo temporal** y **zona UTM** (EPSG:32718 / EPSG:32719), coherente con SSL4EO-L.
 
 ## Estructura del repositorio
 
 ```text
 etiquetado-muestras/
 ├── src/mb_labels/
-│   ├── __init__.py
 │   ├── taxonomy.py          ← taxonomía N1/N2/N3 de clases C2
-│   └── sample_paths.py      ← helpers para descubrir rutas de insumos
+│   └── sample_paths.py      ← descubrimiento de GeoJSON y plan
 ├── scripts/
-│   ├── 00_check_inputs.py              ← verifica insumos
-│   ├── 01_split_plan_by_type.py        ← divide plan por tipo
-│   ├── 02_extract_sieve_rectangles.py  ← extrae clips sieved por zona UTM
-│   └── 03_generate_labels_gpkg.py      ← poligoniza y genera GeoPackages
+│   ├── 00_check_inputs.py
+│   ├── 02_extract_sieve_rectangles.py   ← paso 1: mosaicos {year}.tif
+│   └── 03_generate_labels_gpkg.py       ← paso 2: GeoPackages
 ├── cluster/
+│   ├── activate_mb_labels.sh
 │   ├── run_check_inputs.sh
 │   ├── run_pilot_anuales.sh
-│   ├── run_sieve.sh         ← ejecuta solo el paso de extracción sieve
-│   ├── run_gpkg.sh          ← ejecuta solo la generación de GeoPackages
-│   └── run_all_by_group.sh  ← pipeline completo: sieve → GeoPackages
+│   ├── run_{anuales|estables|transiciones|clases_raras}_utm{18|19}.sh
+│   ├── labels_{annual|stable|transition|rare_classes}_utm{18|19}.slurm
+│   └── submit_labels_groups.sh
 └── docs/
     └── flujo_cluster.md
+```
+
+## Entradas en cluster
+
+```text
+/home/lserey/mapbiomas_land/
+├── prod/samples/
+│   ├── final_samples/UTM{18|19}/{homogeneo_2x2|mixto_3x3}/seleccion_*.geojson
+│   └── intermediate_files/review/listado_revision_manual.csv
+└── ancillary_data/landcover_col2/classification_{year}.tif
 ```
 
 ## Salidas en prod/labels/
 
 ```text
 prod/labels/
-├── raster/                        ← clips sieved por rectángulo-año
-│   ├── annual/
-│   │   ├── UTM18/{grid_id}_{year}.tif   (EPSG:32718)
-│   │   └── UTM19/{grid_id}_{year}.tif   (EPSG:32719)
-│   ├── stable/     UTM18/ UTM19/
-│   ├── transition/ UTM18/ UTM19/
-│   └── rare_classes/ UTM18/ UTM19/
-└── vector/                        ← GeoPackages por grupo y zona
-    ├── annual/
-    │   ├── UTM18/annual_samples_UTM18.gpkg
-    │   └── UTM19/annual_samples_UTM19.gpkg
-    ├── stable/     UTM18/ UTM19/
-    ├── transition/ UTM18/ UTM19/
-    └── rare_classes/ UTM18/ UTM19/
+├── raster/
+│   ├── annual/UTM18/{year}.tif
+│   ├── stable/UTM18/{year}.tif
+│   ├── transition/UTM18/{year}.tif
+│   └── rare_classes/UTM18/{year}.tif
+└── vector/
+    ├── annual/UTM18/annual_samples_UTM18.gpkg
+    ├── stable/UTM18/stable_samples_UTM18.gpkg
+    ├── transition/UTM18/transition_samples_UTM18.gpkg
+    └── rare_classes/UTM18/rare_class_samples_UTM18.gpkg
 ```
 
-## Instalación en el cluster
+(Misma estructura para UTM19.)
+
+## Instalación
 
 ```bash
-cd /home/lserey/repositorios
-git clone <URL_DEL_REPOSITORIO>
-cd LULC/etiquetado-muestras
+cd /home/lserey/repositorio/LULC/etiquetado-muestras
+mamba create -n mb_labels python=3.11 --file requirements.txt -c conda-forge
 ```
 
-Instalar dependencias:
+## Uso rápido
 
 ```bash
-mamba create -n mb_labels python=3.11 geopandas rasterio pyogrio shapely pandas numpy tqdm -c conda-forge
-mamba activate mb_labels
-```
+source cluster/activate_mb_labels.sh
 
-## Pipeline paso a paso
-
-### 0. Verificar insumos
-
-```bash
+# Verificar insumos
 bash cluster/run_check_inputs.sh
-```
 
-Verifica que existan los GeoJSON en `final_samples/`, el plan en `intermediate_files/review/` y los rasters en `ancillary_data/landcover_col2/`.
-
-### 1. Piloto (5 rectángulos, solo anuales)
-
-```bash
+# Piloto (5 rectángulos anuales)
 bash cluster/run_pilot_anuales.sh
-```
 
-Ejecuta los dos pasos del piloto:
-- Extrae 5 rectángulos con sieve → `prod/labels/rectangulos/UTM18/` y `UTM19/`
-- Genera GeoPackages anuales → `prod/labels/anuales/UTM18/` y `UTM19/`
+# Producción vía SLURM (stable + transition + rare)
+mkdir -p /home/lserey/logs
+bash cluster/submit_labels_groups.sh
 
-### 2. Pipeline completo
-
-```bash
-bash cluster/run_all_by_group.sh
-```
-
-Equivalente a ejecutar en secuencia:
-
-```bash
-bash cluster/run_sieve.sh   # Paso 1: extrae clips sieved por zona UTM
-bash cluster/run_gpkg.sh    # Paso 2: genera GeoPackages por grupo y zona
+# O un job individual
+sbatch cluster/labels_stable_utm18.slurm
 ```
 
 ## Parámetros clave
 
 | Script | Parámetro | Default | Descripción |
 |--------|-----------|---------|-------------|
-| `02_extract_sieve_rectangles.py` | `--sieve-size` | 9 | Mínimo de píxeles por parche (0 = desactivar) |
-| `02_extract_sieve_rectangles.py` | `--only-zones` | todas | `UTM18`, `UTM19` o ambas |
-| `02_extract_sieve_rectangles.py` | `--landcover-dir` | `ancillary_data/landcover_col2` | Directorio de rasters C2 |
-| `03_generate_labels_gpkg.py` | `--only-groups` | todos | `anuales`, `estables`, `transiciones`, `clases_raras` |
-| `03_generate_labels_gpkg.py` | `--patches` | dissolve | Conserva parches individuales sin disolver |
-| `03_generate_labels_gpkg.py` | `--area-crs` | EPSG:6933 | CRS igual-área para cálculo de áreas |
+| `02_extract_sieve_rectangles.py` | `--label-group` | anuales | `anuales`, `estables`, `transiciones`, `clases_raras` |
+| `02_extract_sieve_rectangles.py` | `--sieve-size` | 9 | Mínimo píxeles por parche (0 = off) |
+| `02_extract_sieve_rectangles.py` | `--only-zones` | todas | `UTM18`, `UTM19` |
+| `03_generate_labels_gpkg.py` | `--only-groups` | todos | Mismos grupos que arriba |
+| `03_generate_labels_gpkg.py` | `--only-zones` | todas | `utm18`, `utm19` |
+| `03_generate_labels_gpkg.py` | `--write-rare-copy` | off | Requerido para `clases_raras` |
 
-## Campos de salida en GeoPackages
-
-```text
-grid_id          review_year      class_id         class_name
-n1_cd  n1_nm    n2_cd  n2_nm    n3_cd  n3_nm
-es_transversal   es_critica_n3    patch_id
-sample_type      dim_temporal     dim_espacial      review_rule
-review_priority  review_tier      review_status     split
-target_rare_class lulc_mode_id   lulc_mode_name    eco_dom_id  eco_dom_name
-source_tif       utm_zone
-area_m2          area_ha          rect_area_m2      pct_rect
-geometry
-```
-
-## Notas metodológicas
-
-- Los GeoJSON de selección se descubren automáticamente desde `final_samples/UTM{18|19}/{homogeneo_2x2|mixto_3x3}/`. El módulo `sample_paths.py` también soporta el layout legacy (`seleccion_grilla_ssl4eo_muestras_UTM*_scale300.geojson` en la raíz de samples).
-- El plan se busca primero en `intermediate_files/review/listado_revision_manual.csv` y luego en la raíz de samples como fallback.
-- El filtro sieve elimina parches de píxeles aislados menores a `--sieve-size` píxeles antes de poligonizar, reduciendo ruido sal-y-pimienta en el raster C2.
-- Los clips sieved se guardan en la CRS nativa UTM del rectángulo (`prod/labels/rectangulos/UTM18/` o `UTM19/`), permitiendo reprocesar los GeoPackages sin relectura del raster anual completo.
-- Los GeoPackages quedan en CRS nativa UTM, coherente con la proyección esperada por SSL4EO-L.
-- La clave de revisión es `grid_id + review_year`. El split se hereda desde el rectángulo y no debe mezclarse entre train/val/test.
-- Por defecto los parches se disuelven por `grid_id + review_year + class_id`. Usa `--patches` para conservar cada parche continuo como entidad separada.
+Ver `docs/flujo_cluster.md` para el flujo completo en cluster.
