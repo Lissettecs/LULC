@@ -1,187 +1,105 @@
 # MapBiomas C2 Labels Cluster
 
-Repositorio para generar **rectángulos etiquetados** y **subdivisiones internas por clase** usando los landcovers de **MapBiomas Chile Collection 2** disponibles como GeoTIFF en cluster.
+Generación de **etiquetas raster y vectoriales** por rectángulo SSL4EO desde landcovers **MapBiomas Chile Collection 2** (GeoTIFF en cluster), más calibración MMU y filtro sieve para máscaras de entrenamiento.
 
-El flujo está pensado para el proyecto SSL4EO-L / MapBiomas Chile Collection 3.
+Incluye esquema QA para revisión manual en GEE (`gee_app/`) y scripts de publicación versionada.
 
-## Entradas esperadas en el cluster
-
-Los datos principales se mantienen fuera del repositorio:
+## Entradas (cluster)
 
 ```text
 /home/lserey/mapbiomas_land/
-├── prod/
-│   ├── samples/
-│   │   ├── listado_revision_manual.csv
-│   │   ├── seleccion_grilla_ssl4eo_muestras_UTM18_scale300.geojson
-│   │   └── seleccion_grilla_ssl4eo_muestras_UTM19_scale300.geojson
-│   └── labels/
-└── landcover_col2/
-    ├── classification_1999.tif
-    ├── classification_2000.tif
-    ├── ...
-    └── classification_2024.tif
+├── prod/samples/
+│   ├── final_samples/UTM{18|19}/{homogeneo_2x2|mixto_3x3}/seleccion_*.geojson
+│   └── intermediate_files/review/listado_revision_manual.csv
+└── ancillary_data/landcover_col2/
+    └── classification_{1999..2024}.tif
 ```
 
-## Salidas esperadas
+El plan y las geometrías los produce `ssl4eo-sample-generation` (repo `coverage`).
+
+## Salidas (paso 02)
+
+Por zona UTM, raster + GeoPackage:
 
 ```text
-/home/lserey/mapbiomas_land/prod/labels/
-├── anuales/
-│   └── subdivisiones_C2_anuales.gpkg
-├── estables/
-│   └── subdivisiones_C2_estables.gpkg
-├── transiciones/
-│   └── subdivisiones_C2_transiciones.gpkg
-└── clases_raras/
-    └── subdivisiones_C2_clases_raras.gpkg
+prod/labels/annual/
+├── UTM18/
+│   ├── annual_samples.gpkg
+│   ├── resumen_annual_samples.csv
+│   └── raster/
+│       ├── classes/{grid_id}_{year}_classes.tif
+│       └── labels/{grid_id}_{year}_labels.tif
+└── UTM19/
+    └── ...
 ```
 
-Cada GeoPackage contiene polígonos derivados desde el raster C2 correspondiente a cada año de revisión.
-
-La unidad de salida es:
+Tras el filtro sieve (`scripts/filtro_sieve_etiquetas.py`):
 
 ```text
-grid_id + review_year + class_id
+.../sieved/UTM18/raster/classes/{grid_id}_{year}_classes_sieve.tif
 ```
 
-Si se usa `--patches`, la unidad es:
-
-```text
-grid_id + review_year + class_id + patch_id
-```
-
-## Instalación en el cluster
-
-Desde el cluster:
+## Instalación
 
 ```bash
-cd /home/lserey
-mkdir -p repositorios
-cd repositorios
-
-git clone <URL_DEL_REPOSITORIO>
-cd LULC/etiquetado-muestras
+cd ~/repositorio/LULC/etiquetado-muestras
+source cluster/activate_mb_labels.sh
+pip install -r requirements.txt   # si falta scipy u otros
 ```
 
-Instalar dependencias en el ambiente Python que uses:
+## Flujo resumido
+
+1. **Verificar insumos** — `bash cluster/run_check_inputs.sh`
+2. **Etiquetar** — `sbatch cluster/labels_annual_samples.slurm` (o piloto eco: `labels_pilot_ecoregion.slurm`)
+3. **Diagnosticar MMU** — editar paths en `scripts/distribucion_parches_raster.py` → `bash cluster/run_distribucion_parches.sh`
+4. **Filtrar speckle** — editar paths en `scripts/filtro_sieve_etiquetas.py` → `bash cluster/run_filtro_sieve.sh`
+5. **QA GEE** — scripts 04–06 + `gee_app/`
+
+Detalle: [docs/flujo_cluster.md](docs/flujo_cluster.md) · Scripts: [scripts/README.md](scripts/README.md)
+
+## Piloto por ecorregión
 
 ```bash
-pip install -r requirements.txt
-```
+python scripts/select_pilot_by_ecoregion.py \
+  --out-csv /home/lserey/mapbiomas_land/tmp/labels_pilot_ecoregion/pilot_grid_ids_por_ecorregion.csv
 
-Si usas conda/mamba:
-
-```bash
-mamba create -n mb_labels python=3.11 geopandas rasterio pyogrio shapely pandas numpy tqdm -c conda-forge
-mamba activate mb_labels
-```
-
-## Verificar insumos
-
-```bash
-python scripts/00_check_inputs.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2
-```
-
-## Crear planes por tipo
-
-```bash
-python scripts/01_split_plan_by_type.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --out-dir /home/lserey/mapbiomas_land/prod/samples/planes_por_tipo
-```
-
-Esto genera `plan_anuales.csv`, `plan_estables.csv`, `plan_transiciones.csv` y `plan_clases_raras.csv`.
-
-## Ejecutar un piloto
-
-```bash
 python scripts/02_generate_labels_c2_cluster.py \
   --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2 \
-  --labels-dir /home/lserey/mapbiomas_land/prod/labels \
+  --landcover-dir /home/lserey/mapbiomas_land/ancillary_data/landcover_col2 \
+  --labels-dir /home/lserey/mapbiomas_land/tmp/labels_pilot_ecoregion \
   --only-groups anuales \
-  --max-rows 5 \
-  --overwrite
+  --grid-ids-file /home/lserey/mapbiomas_land/tmp/labels_pilot_ecoregion/pilot_grid_ids_por_ecorregion.csv \
+  --product-name annual_samples_ecoregion_pilot \
+  --connectivity 4 --split-by-utm --write-rasters --overwrite
 ```
 
-## Ejecutar por grupo
+## Metodología de parches
 
-Anuales:
+- **Vectorización (paso 02):** conectividad **4 (rook)** por defecto — píxeles diagonales = parches distintos.
+- **Sieve (máscaras):** conectividad **8 (queen)** + MMU por clase en píxeles; clases raras con umbral bajo (2 px).
+- Unidad vectorial: `grid_id + rev_year + class_id + patch_id`.
+
+## Campos principales GPKG
+
+`grid_id`, `rev_year`, `class_id`, `class_nm`, taxonomía N1–N3, `area_ha`, `pct_rect`, `split`, campos QA (`poly_uid`, `rect_qa`, `poly_qa`, …).
+
+## Revisión QA (muestras anuales)
+
+Ver sección QA en documentación anterior y [gee_app/README.md](gee_app/README.md).
 
 ```bash
-python scripts/02_generate_labels_c2_cluster.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2 \
-  --labels-dir /home/lserey/mapbiomas_land/prod/labels \
-  --only-groups anuales \
-  --overwrite
+python scripts/04_init_qa_fields.py \
+  --gpkg /home/lserey/mapbiomas_land/prod/labels/annual/UTM18/annual_samples.gpkg \
+  --layer annual_samples --overwrite
 ```
 
-Estables:
+## SLURM (cluster leftraru)
 
-```bash
-python scripts/02_generate_labels_c2_cluster.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2 \
-  --labels-dir /home/lserey/mapbiomas_land/prod/labels \
-  --only-groups estables \
-  --overwrite
-```
+| Job | Script |
+|-----|--------|
+| Piloto 5 rects | `cluster/labels_pilot_annual_samples.slurm` |
+| Piloto 15 ecos | `cluster/labels_pilot_ecoregion.slurm` |
+| Anuales nacional | `cluster/labels_annual_samples.slurm` |
+| Por grupo | `cluster/labels_anuales.slurm` |
 
-Transiciones:
-
-```bash
-python scripts/02_generate_labels_c2_cluster.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2 \
-  --labels-dir /home/lserey/mapbiomas_land/prod/labels \
-  --only-groups transiciones \
-  --overwrite
-```
-
-Clases raras:
-
-```bash
-python scripts/02_generate_labels_c2_cluster.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2 \
-  --labels-dir /home/lserey/mapbiomas_land/prod/labels \
-  --only-groups clases_raras \
-  --write-rare-copy \
-  --overwrite
-```
-
-## Campos principales de salida
-
-```text
-grid_id
-review_year
-class_id
-class_name
-n1_cd, n1_nm
-n2_cd, n2_nm
-n3_cd, n3_nm
-es_transversal
-es_critica_n3
-area_m2
-area_ha
-pct_rect
-sample_type
-dim_temporal
-dim_espacial
-review_rule
-split
-target_rare_class
-geometry
-```
-
-## Notas metodológicas
-
-- El mismo rectángulo puede aparecer en varios años.
-- La clave de revisión es `grid_id + review_year`.
-- El split se hereda desde el rectángulo. No se deben separar años o chips del mismo rectángulo en train/val/test distintos.
-- Por defecto, el script disuelve parches por `grid_id + review_year + class_id` para reducir tamaño.
-- Usa `--patches` si necesitas conservar cada parche separado.
+Logs: `/home/lserey/logs/`

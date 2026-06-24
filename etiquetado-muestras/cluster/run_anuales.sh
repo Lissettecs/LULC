@@ -9,26 +9,9 @@ SAMPLES_DIR="${SAMPLES_DIR:-/home/lserey/mapbiomas_land/prod/samples}"
 LANDCOVER_DIR="${LANDCOVER_DIR:-/home/lserey/mapbiomas_land/ancillary_data/landcover_col2}"
 LABELS_DIR="${LABELS_DIR:-/home/lserey/mapbiomas_land/prod/labels}"
 
-for group in anuales estables transiciones; do
-  echo "Procesando ${group}"
-  python scripts/02_generate_labels_c2_cluster.py \
-    --samples-dir "${SAMPLES_DIR}" \
-    --landcover-dir "${LANDCOVER_DIR}" \
-    --labels-dir "${LABELS_DIR}" \
-    --only-groups "${group}" \
-    --connectivity 4 \
-    --split-by-utm \
-    --write-rasters \
-    --overwrite
-done
-
 python scripts/02_generate_labels_c2_cluster.py \
   --samples-dir "${SAMPLES_DIR}" \
   --landcover-dir "${LANDCOVER_DIR}" \
   --labels-dir "${LABELS_DIR}" \
-  --only-groups clases_raras \
-  --write-rare-copy \
-  --connectivity 4 \
-  --split-by-utm \
-  --write-rasters \
+  --only-groups anuales \
   --overwrite
