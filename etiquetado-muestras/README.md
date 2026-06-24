@@ -10,15 +10,29 @@ El flujo está pensado para el proyecto SSL4EO-L / MapBiomas Chile Collection 3.
 /home/lserey/mapbiomas_land/
 ├── prod/
 │   └── samples/
-│       ├── listado_revision_manual.csv
-│       ├── seleccion_grilla_ssl4eo_muestras_UTM18_scale300.geojson
-│       └── seleccion_grilla_ssl4eo_muestras_UTM19_scale300.geojson
-└── landcover_col2/
-    ├── classification_1999.tif
-    ├── classification_2000.tif
-    ├── ...
-    └── classification_2024.tif
+│       ├── final_samples/
+│       │   ├── UTM18/
+│       │   │   ├── homogeneo_2x2/
+│       │   │   │   └── seleccion_grilla_ssl4eo_muestras_homogeneo_2x2_UTM18_scale300.geojson
+│       │   │   └── mixto_3x3/
+│       │   │       └── seleccion_grilla_ssl4eo_muestras_mixto_3x3_UTM18_scale300.geojson
+│       │   └── UTM19/
+│       │       ├── homogeneo_2x2/
+│       │       │   └── seleccion_grilla_ssl4eo_muestras_homogeneo_2x2_UTM19_scale300.geojson
+│       │       └── mixto_3x3/
+│       │           └── seleccion_grilla_ssl4eo_muestras_mixto_3x3_UTM19_scale300.geojson
+│       └── intermediate_files/
+│           └── review/
+│               └── listado_revision_manual.csv
+└── ancillary_data/
+    └── landcover_col2/
+        ├── classification_1999.tif
+        ├── classification_2000.tif
+        ├── ...
+        └── classification_2024.tif
 ```
+
+Los GeoJSON de selección son descubiertos automáticamente por `discover_selection_geojsons()` en `src/mb_labels/sample_paths.py`. El script combina `homogeneo_2x2` y `mixto_3x3` de cada zona UTM antes de procesar.
 
 ## Estructura del repositorio
 
@@ -26,10 +40,11 @@ El flujo está pensado para el proyecto SSL4EO-L / MapBiomas Chile Collection 3.
 etiquetado-muestras/
 ├── src/mb_labels/
 │   ├── __init__.py
-│   └── taxonomy.py          ← taxonomía N1/N2/N3 de clases C2
+│   ├── taxonomy.py          ← taxonomía N1/N2/N3 de clases C2
+│   └── sample_paths.py      ← helpers para descubrir rutas de insumos
 ├── scripts/
-│   ├── 00_check_inputs.py   ← verifica insumos
-│   ├── 01_split_plan_by_type.py  ← divide plan por tipo (anual/estable/transicion)
+│   ├── 00_check_inputs.py              ← verifica insumos
+│   ├── 01_split_plan_by_type.py        ← divide plan por tipo
 │   ├── 02_extract_sieve_rectangles.py  ← extrae clips sieved por zona UTM
 │   └── 03_generate_labels_gpkg.py      ← poligoniza y genera GeoPackages
 ├── cluster/
@@ -47,14 +62,14 @@ etiquetado-muestras/
 ```text
 prod/labels/
 ├── rectangulos/               ← rasters sieved por rectángulo-año
-│   ├── utm18/{grid_id}_{year}.tif   (EPSG:32718)
-│   └── utm19/{grid_id}_{year}.tif   (EPSG:32719)
+│   ├── UTM18/{grid_id}_{year}.tif   (EPSG:32718)
+│   └── UTM19/{grid_id}_{year}.tif   (EPSG:32719)
 ├── anuales/
-│   ├── utm18/subdivisiones_C2_anuales_utm18.gpkg
-│   └── utm19/subdivisiones_C2_anuales_utm19.gpkg
-├── estables/    utm18/ utm19/
-├── transiciones/ utm18/ utm19/
-└── clases_raras/ utm18/ utm19/
+│   ├── UTM18/subdivisiones_C2_anuales_UTM18.gpkg
+│   └── UTM19/subdivisiones_C2_anuales_UTM19.gpkg
+├── estables/    UTM18/ UTM19/
+├── transiciones/ UTM18/ UTM19/
+└── clases_raras/ UTM18/ UTM19/
 ```
 
 ## Instalación en el cluster
@@ -80,23 +95,29 @@ mamba activate mb_labels
 bash cluster/run_check_inputs.sh
 ```
 
-### 1. (Opcional) Dividir plan por tipo
+Verifica que existan los GeoJSON en `final_samples/`, el plan en `intermediate_files/review/` y los rasters en `ancillary_data/landcover_col2/`.
 
-```bash
-python scripts/01_split_plan_by_type.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples
-```
-
-### 2. Piloto (5 rectángulos)
+### 1. Piloto (5 rectángulos, solo anuales)
 
 ```bash
 bash cluster/run_pilot_anuales.sh
 ```
 
-### 3. Pipeline completo
+Ejecuta los dos pasos del piloto:
+- Extrae 5 rectángulos con sieve → `prod/labels/rectangulos/UTM18/` y `UTM19/`
+- Genera GeoPackages anuales → `prod/labels/anuales/UTM18/` y `UTM19/`
+
+### 2. Pipeline completo
 
 ```bash
 bash cluster/run_all_by_group.sh
+```
+
+Equivalente a ejecutar en secuencia:
+
+```bash
+bash cluster/run_sieve.sh   # Paso 1: extrae clips sieved por zona UTM
+bash cluster/run_gpkg.sh    # Paso 2: genera GeoPackages por grupo y zona
 ```
 
 ## Parámetros clave
@@ -104,7 +125,8 @@ bash cluster/run_all_by_group.sh
 | Script | Parámetro | Default | Descripción |
 |--------|-----------|---------|-------------|
 | `02_extract_sieve_rectangles.py` | `--sieve-size` | 9 | Mínimo de píxeles por parche (0 = desactivar) |
-| `02_extract_sieve_rectangles.py` | `--only-zones` | todas | `utm18`, `utm19` o ambas |
+| `02_extract_sieve_rectangles.py` | `--only-zones` | todas | `UTM18`, `UTM19` o ambas |
+| `02_extract_sieve_rectangles.py` | `--landcover-dir` | `ancillary_data/landcover_col2` | Directorio de rasters C2 |
 | `03_generate_labels_gpkg.py` | `--only-groups` | todos | `anuales`, `estables`, `transiciones`, `clases_raras` |
 | `03_generate_labels_gpkg.py` | `--patches` | dissolve | Conserva parches individuales sin disolver |
 | `03_generate_labels_gpkg.py` | `--area-crs` | EPSG:6933 | CRS igual-área para cálculo de áreas |
@@ -125,8 +147,10 @@ geometry
 
 ## Notas metodológicas
 
+- Los GeoJSON de selección se descubren automáticamente desde `final_samples/UTM{18|19}/{homogeneo_2x2|mixto_3x3}/`. El módulo `sample_paths.py` también soporta el layout legacy (`seleccion_grilla_ssl4eo_muestras_UTM*_scale300.geojson` en la raíz de samples).
+- El plan se busca primero en `intermediate_files/review/listado_revision_manual.csv` y luego en la raíz de samples como fallback.
 - El filtro sieve elimina parches de píxeles aislados menores a `--sieve-size` píxeles antes de poligonizar, reduciendo ruido sal-y-pimienta en el raster C2.
-- Los clips sieved se guardan en la CRS nativa UTM del rectángulo (`prod/labels/rectangulos/utm18/` o `utm19/`), permitiendo reprocesar los GeoPackages sin relectura del raster anual completo.
-- Los GeoPackages también quedan en CRS nativa UTM, coherente con la proyección esperada por SSL4EO-L.
+- Los clips sieved se guardan en la CRS nativa UTM del rectángulo (`prod/labels/rectangulos/UTM18/` o `UTM19/`), permitiendo reprocesar los GeoPackages sin relectura del raster anual completo.
+- Los GeoPackages quedan en CRS nativa UTM, coherente con la proyección esperada por SSL4EO-L.
 - La clave de revisión es `grid_id + review_year`. El split se hereda desde el rectángulo y no debe mezclarse entre train/val/test.
 - Por defecto los parches se disuelven por `grid_id + review_year + class_id`. Usa `--patches` para conservar cada parche continuo como entidad separada.
