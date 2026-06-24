@@ -6,7 +6,7 @@ cd /home/lserey/repositorios/LULC/etiquetado-muestras
 echo "--- Paso 1: extracción con sieve (5 rectángulos) ---"
 python scripts/02_extract_sieve_rectangles.py \
   --samples-dir   /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2 \
+  --landcover-dir /home/lserey/mapbiomas_land/ancillary_data/landcover_col2 \
   --labels-dir    /home/lserey/mapbiomas_land/prod/labels \
   --sieve-size    9 \
   --max-rows      5 \

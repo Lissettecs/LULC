@@ -38,11 +38,17 @@ SRC = REPO_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 from mb_labels.taxonomy import lookup_taxonomy  # noqa: E402
+from mb_labels.sample_paths import (  # noqa: E402
+    DEFAULT_SAMPLES_DIR,
+    discover_selection_geojsons,
+    infer_selection_crs,
+    infer_utm_zone,
+    resolve_plan_path,
+)
 
-DEFAULT_SAMPLES_DIR = Path("/home/lserey/mapbiomas_land/prod/samples")
 DEFAULT_LABELS_DIR = Path("/home/lserey/mapbiomas_land/prod/labels")
 
-UTM_CRS = {"utm18": "EPSG:32718", "utm19": "EPSG:32719"}
+UTM_CRS = {"UTM18": "EPSG:32718", "UTM19": "EPSG:32719"}
 GROUP_MAP = {"anual": "anuales", "estable": "estables", "transicion": "transiciones"}
 ALL_GROUPS = ["anuales", "estables", "transiciones", "clases_raras"]
 
@@ -68,7 +74,7 @@ def clean_value(value):
 
 
 def load_plan(samples_dir: Path, plan_name: str) -> pd.DataFrame:
-    path = samples_dir / plan_name
+    path = resolve_plan_path(samples_dir, plan_name)
     df = pd.read_csv(path, encoding="utf-8-sig")
     df["grid_id"] = df["grid_id"].astype(str)
     if "target_rare_class" not in df.columns:
@@ -91,15 +97,10 @@ def expand_plan(plan: pd.DataFrame, write_rare_copy: bool) -> pd.DataFrame:
 
 
 def build_grid_zone(samples_dir: Path) -> dict[str, str]:
+    """Mapea grid_id → zona UTM ('UTM18' o 'UTM19') usando la estructura real de final_samples."""
     grid_zone: dict[str, str] = {}
-    for f in sorted(samples_dir.glob("seleccion_grilla_ssl4eo_muestras_UTM*_scale300.geojson")):
-        name_upper = f.name.upper()
-        if "UTM18" in name_upper:
-            zone = "utm18"
-        elif "UTM19" in name_upper:
-            zone = "utm19"
-        else:
-            continue
+    for f in discover_selection_geojsons(samples_dir):
+        zone = infer_utm_zone(f)   # "UTM18" o "UTM19"
         gdf = gpd.read_file(f, columns=["grid_id"])
         for gid in gdf["grid_id"].astype(str):
             grid_zone[gid] = zone
@@ -146,7 +147,7 @@ def polygonize_tif(tif_path: Path, utm_crs: str, area_crs: str, keep_patches: bo
 
 
 def process_group_zone(group_name: str, zone: str, work: pd.DataFrame, rects_dir: Path, args) -> None:
-    utm_crs = UTM_CRS[zone]
+    utm_crs = UTM_CRS[zone]                         # zone es "UTM18" o "UTM19"
     out_dir = args.labels_dir / group_name / zone
     out_dir.mkdir(parents=True, exist_ok=True)
 

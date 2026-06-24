@@ -15,6 +15,7 @@ original del raster fuente.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import geopandas as gpd
@@ -27,11 +28,23 @@ from rasterio.warp import Resampling, calculate_default_transform, reproject
 from shapely.geometry import mapping
 from tqdm import tqdm
 
-DEFAULT_SAMPLES_DIR = Path("/home/lserey/mapbiomas_land/prod/samples")
-DEFAULT_LANDCOVER_DIR = Path("/home/lserey/mapbiomas_land/landcover_col2")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC = REPO_ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from mb_labels.sample_paths import (  # noqa: E402
+    DEFAULT_LANDCOVER_DIR,
+    DEFAULT_SAMPLES_DIR,
+    discover_selection_geojsons,
+    infer_selection_crs,
+    infer_utm_zone,
+    resolve_plan_path,
+)
+
 DEFAULT_LABELS_DIR = Path("/home/lserey/mapbiomas_land/prod/labels")
 
-UTM_CRS = {"utm18": "EPSG:32718", "utm19": "EPSG:32719"}
+UTM_CRS = {"UTM18": "EPSG:32718", "UTM19": "EPSG:32719"}
 
 
 def parse_years(value) -> list[int]:
@@ -41,29 +54,40 @@ def parse_years(value) -> list[int]:
 
 
 def read_rectangles_by_zone(samples_dir: Path) -> dict[str, gpd.GeoDataFrame]:
-    """Lee los GeoJSON de muestras y devuelve un dict {zona: GeoDataFrame} en CRS nativa UTM."""
-    files = sorted(samples_dir.glob("seleccion_grilla_ssl4eo_muestras_UTM*_scale300.geojson"))
-    result: dict[str, gpd.GeoDataFrame] = {}
+    """
+    Descubre todos los GeoJSON de selección (nueva estructura final_samples/UTM*/tipo/
+    o legacy) y devuelve un dict {zona: GeoDataFrame} en CRS nativa UTM.
+    Combina homogeneo_2x2 y mixto_3x3 dentro de cada zona.
+    """
+    files = discover_selection_geojsons(samples_dir)
+    if not files:
+        raise FileNotFoundError(f"No se encontraron GeoJSON de selección en {samples_dir}")
+
+    frames: dict[str, list[gpd.GeoDataFrame]] = {}
     for f in files:
-        name_upper = f.name.upper()
-        if "UTM18" in name_upper:
-            zone, crs = "utm18", "EPSG:32718"
-        elif "UTM19" in name_upper:
-            zone, crs = "utm19", "EPSG:32719"
-        else:
-            continue
+        zone = infer_utm_zone(f)          # "UTM18" o "UTM19"
+        crs = infer_selection_crs(f)      # "EPSG:32718" o "EPSG:32719"
         gdf = gpd.read_file(f)
         gdf = gdf.set_crs(crs) if gdf.crs is None else gdf.to_crs(crs)
         gdf["grid_id"] = gdf["grid_id"].astype(str)
         gdf["utm_zone"] = zone
-        result[zone] = gdf
-        print(f"  {zone}: {len(gdf)} rectángulos ({f.name})")
+        gdf["source_file"] = f.name
+        frames.setdefault(zone, []).append(gdf)
+        print(f"  {zone}: {len(gdf)} rectángulos ({f.relative_to(samples_dir)})")
+
+    result = {}
+    for zone, gdfs in frames.items():
+        combined = pd.concat(gdfs, ignore_index=True)
+        if combined["grid_id"].duplicated().any():
+            dup = combined.loc[combined["grid_id"].duplicated(keep=False), "grid_id"].unique()
+            raise ValueError(f"grid_id duplicados en zona {zone}: {dup[:10]}")
+        result[zone] = gpd.GeoDataFrame(combined, geometry="geometry", crs=gdfs[0].crs)
     return result
 
 
 def build_work(samples_dir: Path, plan_name: str, grid_zone: dict[str, str]) -> pd.DataFrame:
     """Expande el plan a pares únicos (grid_id, review_year)."""
-    plan = pd.read_csv(samples_dir / plan_name, encoding="utf-8-sig")
+    plan = pd.read_csv(resolve_plan_path(samples_dir, plan_name), encoding="utf-8-sig")
     plan["grid_id"] = plan["grid_id"].astype(str)
     rows = []
     for _, row in plan.iterrows():
@@ -169,7 +193,7 @@ def main() -> int:
     if args.only_years:
         work = work[work["review_year"].isin(args.only_years)].copy()
     if args.only_zones:
-        work = work[work["utm_zone"].isin(args.only_zones)].copy()
+        work = work[work["utm_zone"].isin([z.upper() for z in args.only_zones])].copy()
     if args.max_rows:
         work = work.head(args.max_rows).copy()
 
@@ -191,7 +215,7 @@ def main() -> int:
 
         with rasterio.open(raster_path) as src:
             for _, row in tqdm(sub_year.iterrows(), total=len(sub_year), desc=f"año {year}"):
-                zone = row["utm_zone"]
+                zone = row["utm_zone"]   # "UTM18" o "UTM19"
                 gid = row["grid_id"]
                 out_path = out_base / zone / f"{gid}_{year}.tif"
 
