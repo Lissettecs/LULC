@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Piloto: extrae 5 rectángulos con sieve y genera GeoPackages para anuales
 set -euo pipefail
-cd /home/lserey/repositorios/LULC/etiquetado-muestras
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 echo "--- Paso 1: extracción con sieve (5 rectángulos) ---"
 python scripts/02_extract_sieve_rectangles.py \

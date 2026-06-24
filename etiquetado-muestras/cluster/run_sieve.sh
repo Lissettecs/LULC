@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Extrae rectángulos con filtro sieve y los guarda por zona UTM en prod/labels/rectangulos/
 set -euo pipefail
-cd /home/lserey/repositorios/LULC/etiquetado-muestras
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 python scripts/02_extract_sieve_rectangles.py \
   --samples-dir   /home/lserey/mapbiomas_land/prod/samples \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pipeline completo: sieve → GeoPackages para todos los grupos y zonas UTM
 set -euo pipefail
-cd /home/lserey/repositorios/LULC/etiquetado-muestras
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 echo "=========================================="
 echo " PASO 1: Extraer rectángulos con sieve"

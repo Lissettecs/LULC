@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Genera GeoPackages por grupo y zona UTM desde los rasters sieved
 set -euo pipefail
-cd /home/lserey/repositorios/LULC/etiquetado-muestras
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 for group in anuales estables transiciones; do
   echo "=== Generando GeoPackages: ${group} ==="

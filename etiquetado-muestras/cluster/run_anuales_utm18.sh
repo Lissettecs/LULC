@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Etiqueta rectángulos anuales zona UTM18: extrae clips sieved y genera GeoPackage
 set -euo pipefail
-cd /home/lserey/repositorios/LULC/etiquetado-muestras
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 SAMPLES_DIR="/home/lserey/mapbiomas_land/prod/samples"
 LANDCOVER_DIR="/home/lserey/mapbiomas_land/ancillary_data/landcover_col2"
