@@ -1,108 +1,118 @@
 # Flujo de etiquetado en cluster
 
-Repositorio: `/home/lserey/repositorio/LULC/etiquetado-muestras`
+## Estructura de salida en prod/labels/
+
+```text
+prod/labels/
+├── rectangulos/               ← rasters sieved por rectángulo-año
+│   ├── utm18/
+│   │   └── {grid_id}_{year}.tif   (EPSG:32718)
+│   └── utm19/
+│       └── {grid_id}_{year}.tif   (EPSG:32719)
+├── anuales/
+│   ├── utm18/
+│   │   ├── subdivisiones_C2_anuales_utm18.gpkg
+│   │   └── resumen_C2_anuales_utm18.csv
+│   └── utm19/
+│       ├── subdivisiones_C2_anuales_utm19.gpkg
+│       └── resumen_C2_anuales_utm19.csv
+├── estables/    utm18/ utm19/
+├── transiciones/ utm18/ utm19/
+└── clases_raras/ utm18/ utm19/
+```
+
+Los GeoPackages se mantienen en la CRS nativa UTM del rectángulo (EPSG:32718
+o EPSG:32719), coherente con la proyección esperada por SSL4EO-L.
+
+---
 
 ## 1. Verificar entradas
 
 ```bash
-cd /home/lserey/repositorio/LULC/etiquetado-muestras
-source cluster/activate_mb_labels.sh
+cd /home/lserey/repositorios/LULC/etiquetado-muestras
 bash cluster/run_check_inputs.sh
 ```
 
-Comprueba:
-- Plan en `prod/samples/intermediate_files/review/listado_revision_manual.csv`
-- Rectángulos en `prod/samples/final_samples/UTM*/**/seleccion_*.geojson`
-- Rasters C2 en `ancillary_data/landcover_col2/classification_{year}.tif`
-
-## 2. Piloto rápido (5 rectángulos anuales)
+## 2. Piloto (5 rectángulos, solo anuales)
 
 ```bash
-sbatch cluster/labels_pilot_annual_samples.slurm
-# o:
-bash cluster/run_pilot_annual_samples.sh
+bash cluster/run_pilot_anuales.sh
 ```
 
-Salida: `tmp/labels_pilot_annual_samples_v2/UTM{18|19}/`
+Esto ejecuta los dos pasos del piloto:
+- Extrae 5 rectángulos con sieve → `prod/labels/rectangulos/{utm18,utm19}/`
+- Genera GeoPackages anuales → `prod/labels/anuales/{utm18,utm19}/`
 
-## 3. Piloto por ecorregión (15 rects, 1 por eco)
-
-```bash
-sbatch cluster/labels_pilot_ecoregion.slurm
-# o:
-bash cluster/run_pilot_ecoregion_coverage.sh
+Revisar en QGIS:
+```text
+prod/labels/anuales/utm18/subdivisiones_C2_anuales_utm18.gpkg
+prod/labels/anuales/utm19/subdivisiones_C2_anuales_utm19.gpkg
 ```
 
-Genera `pilot_grid_ids_por_ecorregion.csv` y etiqueta esos `grid_id`.
-
-Salida: `tmp/labels_pilot_ecoregion/UTM{18|19}/`
-
-## 4. Etiquetado nacional (anuales)
-
-```bash
-mkdir -p ~/logs
-sbatch cluster/labels_annual_samples.slurm
-```
-
-Producto QA: `prod/labels/annual/UTM{18|19}/annual_samples.gpkg`
-
-## 5. Diagnóstico MMU (calibración de umbrales)
-
-Editar `INPUT_DIR` y `SELECTION_TABLE` en `scripts/distribucion_parches_raster.py`, luego:
-
-```bash
-bash cluster/run_distribucion_parches.sh
-```
-
-Reportes: `distribucion_parches_por_clase.csv`, `clases_ausentes.csv`, cobertura por tile/año/ecorregión.
-
-## 6. Filtro sieve (speckle → máscaras de entrenamiento)
-
-Editar `INPUT_DIR` / `OUTPUT_DIR` en `scripts/filtro_sieve_etiquetas.py`, luego:
-
-```bash
-bash cluster/run_filtro_sieve.sh
-```
-
-Entrada: `*_classes.tif` · Salida: `*_classes_sieve.tif` (no sobrescribe originales).
-
-## 7. Producción por grupo
+## 3. Pipeline completo
 
 ```bash
 bash cluster/run_all_by_group.sh
 ```
 
-## 8. Parches individuales (conectividad rook)
+Equivalente a ejecutar en secuencia:
 
-Por defecto el paso 02 usa **conectividad 4** (rook) al vectorizar. Para comparar con queen:
+### Paso 1 — Extraer rectángulos con sieve
 
 ```bash
-python scripts/02_generate_labels_c2_cluster.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/ancillary_data/landcover_col2 \
-  --labels-dir /home/lserey/mapbiomas_land/prod/labels \
-  --only-groups anuales \
-  --connectivity 8 \
+python scripts/02_extract_sieve_rectangles.py \
+  --samples-dir   /home/lserey/mapbiomas_land/prod/samples \
+  --landcover-dir /home/lserey/mapbiomas_land/landcover_col2 \
+  --labels-dir    /home/lserey/mapbiomas_land/prod/labels \
+  --sieve-size    9 \
   --overwrite
 ```
 
-## Estructura de salida (paso 02)
+El parámetro `--sieve-size` indica el número mínimo de píxeles de un parche
+para que no sea eliminado. Con `--sieve-size 0` se desactiva el filtro.
 
-```text
-labels-dir/
-├── UTM18/
-│   ├── annual_samples.gpkg
-│   ├── resumen_annual_samples.csv
-│   └── raster/
-│       ├── classes/{grid_id}_{year}_classes.tif
-│       └── labels/{grid_id}_{year}_labels.tif
-└── UTM19/
-    └── ...
+### Paso 2 — Generar GeoPackages
+
+```bash
+bash cluster/run_gpkg.sh
 ```
 
-Tras el sieve:
+O por grupo individual:
 
-```text
-labels-dir/sieved/
-└── UTM18/raster/classes/{grid_id}_{year}_classes_sieve.tif
+```bash
+python scripts/03_generate_labels_gpkg.py \
+  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
+  --labels-dir  /home/lserey/mapbiomas_land/prod/labels \
+  --only-groups anuales \
+  --overwrite
+```
+
+## 4. Opciones adicionales
+
+### Separar por zona UTM
+
+```bash
+python scripts/03_generate_labels_gpkg.py \
+  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
+  --labels-dir  /home/lserey/mapbiomas_land/prod/labels \
+  --only-zones  utm18 \
+  --overwrite
+```
+
+### Conservar parches individuales (sin disolver por clase)
+
+```bash
+python scripts/03_generate_labels_gpkg.py \
+  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
+  --labels-dir  /home/lserey/mapbiomas_land/prod/labels \
+  --only-groups anuales \
+  --patches \
+  --overwrite
+```
+
+### Filtrar por año
+
+```bash
+python scripts/02_extract_sieve_rectangles.py ... --only-years 2020 2021
+python scripts/03_generate_labels_gpkg.py     ... --only-years 2020 2021
 ```

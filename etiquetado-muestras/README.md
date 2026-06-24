@@ -1,105 +1,132 @@
 # MapBiomas C2 Labels Cluster
 
-Generación de **etiquetas raster y vectoriales** por rectángulo SSL4EO desde landcovers **MapBiomas Chile Collection 2** (GeoTIFF en cluster), más calibración MMU y filtro sieve para máscaras de entrenamiento.
+Repositorio para generar **rectángulos etiquetados** y **GeoPackages de subdivisiones** usando los landcovers de **MapBiomas Chile Collection 2** disponibles como GeoTIFF en cluster.
 
-Incluye esquema QA para revisión manual en GEE (`gee_app/`) y scripts de publicación versionada.
+El flujo está pensado para el proyecto SSL4EO-L / MapBiomas Chile Collection 3. Los GeoPackages se generan en la **CRS nativa UTM** de cada rectángulo (EPSG:32718 o EPSG:32719), coherente con la proyección usada por SSL4EO-L.
 
-## Entradas (cluster)
+## Entradas esperadas en el cluster
 
 ```text
 /home/lserey/mapbiomas_land/
-├── prod/samples/
-│   ├── final_samples/UTM{18|19}/{homogeneo_2x2|mixto_3x3}/seleccion_*.geojson
-│   └── intermediate_files/review/listado_revision_manual.csv
-└── ancillary_data/landcover_col2/
-    └── classification_{1999..2024}.tif
+├── prod/
+│   └── samples/
+│       ├── listado_revision_manual.csv
+│       ├── seleccion_grilla_ssl4eo_muestras_UTM18_scale300.geojson
+│       └── seleccion_grilla_ssl4eo_muestras_UTM19_scale300.geojson
+└── landcover_col2/
+    ├── classification_1999.tif
+    ├── classification_2000.tif
+    ├── ...
+    └── classification_2024.tif
 ```
 
-El plan y las geometrías los produce `ssl4eo-sample-generation` (repo `coverage`).
-
-## Salidas (paso 02)
-
-Por zona UTM, raster + GeoPackage:
+## Estructura del repositorio
 
 ```text
-prod/labels/annual/
-├── UTM18/
-│   ├── annual_samples.gpkg
-│   ├── resumen_annual_samples.csv
-│   └── raster/
-│       ├── classes/{grid_id}_{year}_classes.tif
-│       └── labels/{grid_id}_{year}_labels.tif
-└── UTM19/
-    └── ...
+etiquetado-muestras/
+├── src/mb_labels/
+│   ├── __init__.py
+│   └── taxonomy.py          ← taxonomía N1/N2/N3 de clases C2
+├── scripts/
+│   ├── 00_check_inputs.py   ← verifica insumos
+│   ├── 01_split_plan_by_type.py  ← divide plan por tipo (anual/estable/transicion)
+│   ├── 02_extract_sieve_rectangles.py  ← extrae clips sieved por zona UTM
+│   └── 03_generate_labels_gpkg.py      ← poligoniza y genera GeoPackages
+├── cluster/
+│   ├── run_check_inputs.sh
+│   ├── run_pilot_anuales.sh
+│   ├── run_sieve.sh         ← ejecuta solo el paso de extracción sieve
+│   ├── run_gpkg.sh          ← ejecuta solo la generación de GeoPackages
+│   └── run_all_by_group.sh  ← pipeline completo: sieve → GeoPackages
+└── docs/
+    └── flujo_cluster.md
 ```
 
-Tras el filtro sieve (`scripts/filtro_sieve_etiquetas.py`):
+## Salidas en prod/labels/
 
 ```text
-.../sieved/UTM18/raster/classes/{grid_id}_{year}_classes_sieve.tif
+prod/labels/
+├── rectangulos/               ← rasters sieved por rectángulo-año
+│   ├── utm18/{grid_id}_{year}.tif   (EPSG:32718)
+│   └── utm19/{grid_id}_{year}.tif   (EPSG:32719)
+├── anuales/
+│   ├── utm18/subdivisiones_C2_anuales_utm18.gpkg
+│   └── utm19/subdivisiones_C2_anuales_utm19.gpkg
+├── estables/    utm18/ utm19/
+├── transiciones/ utm18/ utm19/
+└── clases_raras/ utm18/ utm19/
 ```
 
-## Instalación
+## Instalación en el cluster
 
 ```bash
-cd ~/repositorio/LULC/etiquetado-muestras
-source cluster/activate_mb_labels.sh
-pip install -r requirements.txt   # si falta scipy u otros
+cd /home/lserey/repositorios
+git clone <URL_DEL_REPOSITORIO>
+cd LULC/etiquetado-muestras
 ```
 
-## Flujo resumido
-
-1. **Verificar insumos** — `bash cluster/run_check_inputs.sh`
-2. **Etiquetar** — `sbatch cluster/labels_annual_samples.slurm` (o piloto eco: `labels_pilot_ecoregion.slurm`)
-3. **Diagnosticar MMU** — editar paths en `scripts/distribucion_parches_raster.py` → `bash cluster/run_distribucion_parches.sh`
-4. **Filtrar speckle** — editar paths en `scripts/filtro_sieve_etiquetas.py` → `bash cluster/run_filtro_sieve.sh`
-5. **QA GEE** — scripts 04–06 + `gee_app/`
-
-Detalle: [docs/flujo_cluster.md](docs/flujo_cluster.md) · Scripts: [scripts/README.md](scripts/README.md)
-
-## Piloto por ecorregión
+Instalar dependencias:
 
 ```bash
-python scripts/select_pilot_by_ecoregion.py \
-  --out-csv /home/lserey/mapbiomas_land/tmp/labels_pilot_ecoregion/pilot_grid_ids_por_ecorregion.csv
-
-python scripts/02_generate_labels_c2_cluster.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/ancillary_data/landcover_col2 \
-  --labels-dir /home/lserey/mapbiomas_land/tmp/labels_pilot_ecoregion \
-  --only-groups anuales \
-  --grid-ids-file /home/lserey/mapbiomas_land/tmp/labels_pilot_ecoregion/pilot_grid_ids_por_ecorregion.csv \
-  --product-name annual_samples_ecoregion_pilot \
-  --connectivity 4 --split-by-utm --write-rasters --overwrite
+mamba create -n mb_labels python=3.11 geopandas rasterio pyogrio shapely pandas numpy tqdm -c conda-forge
+mamba activate mb_labels
 ```
 
-## Metodología de parches
+## Pipeline paso a paso
 
-- **Vectorización (paso 02):** conectividad **4 (rook)** por defecto — píxeles diagonales = parches distintos.
-- **Sieve (máscaras):** conectividad **8 (queen)** + MMU por clase en píxeles; clases raras con umbral bajo (2 px).
-- Unidad vectorial: `grid_id + rev_year + class_id + patch_id`.
-
-## Campos principales GPKG
-
-`grid_id`, `rev_year`, `class_id`, `class_nm`, taxonomía N1–N3, `area_ha`, `pct_rect`, `split`, campos QA (`poly_uid`, `rect_qa`, `poly_qa`, …).
-
-## Revisión QA (muestras anuales)
-
-Ver sección QA en documentación anterior y [gee_app/README.md](gee_app/README.md).
+### 0. Verificar insumos
 
 ```bash
-python scripts/04_init_qa_fields.py \
-  --gpkg /home/lserey/mapbiomas_land/prod/labels/annual/UTM18/annual_samples.gpkg \
-  --layer annual_samples --overwrite
+bash cluster/run_check_inputs.sh
 ```
 
-## SLURM (cluster leftraru)
+### 1. (Opcional) Dividir plan por tipo
 
-| Job | Script |
-|-----|--------|
-| Piloto 5 rects | `cluster/labels_pilot_annual_samples.slurm` |
-| Piloto 15 ecos | `cluster/labels_pilot_ecoregion.slurm` |
-| Anuales nacional | `cluster/labels_annual_samples.slurm` |
-| Por grupo | `cluster/labels_anuales.slurm` |
+```bash
+python scripts/01_split_plan_by_type.py \
+  --samples-dir /home/lserey/mapbiomas_land/prod/samples
+```
 
-Logs: `/home/lserey/logs/`
+### 2. Piloto (5 rectángulos)
+
+```bash
+bash cluster/run_pilot_anuales.sh
+```
+
+### 3. Pipeline completo
+
+```bash
+bash cluster/run_all_by_group.sh
+```
+
+## Parámetros clave
+
+| Script | Parámetro | Default | Descripción |
+|--------|-----------|---------|-------------|
+| `02_extract_sieve_rectangles.py` | `--sieve-size` | 9 | Mínimo de píxeles por parche (0 = desactivar) |
+| `02_extract_sieve_rectangles.py` | `--only-zones` | todas | `utm18`, `utm19` o ambas |
+| `03_generate_labels_gpkg.py` | `--only-groups` | todos | `anuales`, `estables`, `transiciones`, `clases_raras` |
+| `03_generate_labels_gpkg.py` | `--patches` | dissolve | Conserva parches individuales sin disolver |
+| `03_generate_labels_gpkg.py` | `--area-crs` | EPSG:6933 | CRS igual-área para cálculo de áreas |
+
+## Campos de salida en GeoPackages
+
+```text
+grid_id          review_year      class_id         class_name
+n1_cd  n1_nm    n2_cd  n2_nm    n3_cd  n3_nm
+es_transversal   es_critica_n3    patch_id
+sample_type      dim_temporal     dim_espacial      review_rule
+review_priority  review_tier      review_status     split
+target_rare_class lulc_mode_id   lulc_mode_name    eco_dom_id  eco_dom_name
+source_tif       utm_zone
+area_m2          area_ha          rect_area_m2      pct_rect
+geometry
+```
+
+## Notas metodológicas
+
+- El filtro sieve elimina parches de píxeles aislados menores a `--sieve-size` píxeles antes de poligonizar, reduciendo ruido sal-y-pimienta en el raster C2.
+- Los clips sieved se guardan en la CRS nativa UTM del rectángulo (`prod/labels/rectangulos/utm18/` o `utm19/`), permitiendo reprocesar los GeoPackages sin relectura del raster anual completo.
+- Los GeoPackages también quedan en CRS nativa UTM, coherente con la proyección esperada por SSL4EO-L.
+- La clave de revisión es `grid_id + review_year`. El split se hereda desde el rectángulo y no debe mezclarse entre train/val/test.
+- Por defecto los parches se disuelven por `grid_id + review_year + class_id`. Usa `--patches` para conservar cada parche continuo como entidad separada.

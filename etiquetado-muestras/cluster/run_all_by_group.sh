@@ -1,34 +1,18 @@
 #!/usr/bin/env bash
+# Pipeline completo: sieve → GeoPackages para todos los grupos y zonas UTM
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC1091
-source "${SCRIPT_DIR}/activate_mb_labels.sh"
-cd "${SCRIPT_DIR}/.."
+cd /home/lserey/repositorios/LULC/etiquetado-muestras
 
-SAMPLES_DIR="${SAMPLES_DIR:-/home/lserey/mapbiomas_land/prod/samples}"
-LANDCOVER_DIR="${LANDCOVER_DIR:-/home/lserey/mapbiomas_land/ancillary_data/landcover_col2}"
-LABELS_DIR="${LABELS_DIR:-/home/lserey/mapbiomas_land/prod/labels}"
+echo "=========================================="
+echo " PASO 1: Extraer rectángulos con sieve"
+echo "=========================================="
+bash cluster/run_sieve.sh
 
-for group in anuales estables transiciones; do
-  echo "Procesando ${group}"
-  python scripts/02_generate_labels_c2_cluster.py \
-    --samples-dir "${SAMPLES_DIR}" \
-    --landcover-dir "${LANDCOVER_DIR}" \
-    --labels-dir "${LABELS_DIR}" \
-    --only-groups "${group}" \
-    --connectivity 4 \
-    --split-by-utm \
-    --write-rasters \
-    --overwrite
-done
+echo ""
+echo "=========================================="
+echo " PASO 2: Generar GeoPackages"
+echo "=========================================="
+bash cluster/run_gpkg.sh
 
-python scripts/02_generate_labels_c2_cluster.py \
-  --samples-dir "${SAMPLES_DIR}" \
-  --landcover-dir "${LANDCOVER_DIR}" \
-  --labels-dir "${LABELS_DIR}" \
-  --only-groups clases_raras \
-  --write-rare-copy \
-  --connectivity 4 \
-  --split-by-utm \
-  --write-rasters \
-  --overwrite
+echo ""
+echo "Pipeline completo."
