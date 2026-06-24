@@ -6,134 +6,79 @@
 /home/lserey/mapbiomas_land/
 ├── prod/samples/
 │   ├── final_samples/
-│   │   ├── UTM18/
-│   │   │   ├── homogeneo_2x2/seleccion_*.geojson
-│   │   │   └── mixto_3x3/seleccion_*.geojson
-│   │   └── UTM19/
-│   │       ├── homogeneo_2x2/seleccion_*.geojson
-│   │       └── mixto_3x3/seleccion_*.geojson
+│   │   ├── UTM18/{homogeneo_2x2,mixto_3x3}/seleccion_*.geojson
+│   │   └── UTM19/{homogeneo_2x2,mixto_3x3}/seleccion_*.geojson
 │   └── intermediate_files/review/listado_revision_manual.csv
 └── ancillary_data/landcover_col2/classification_{year}.tif
 ```
 
-## Estructura de salida en prod/labels/
+## Estructura de salida
 
 ```text
 prod/labels/
-├── raster/                        ← clips sieved por rectángulo-año
-│   ├── annual/
-│   │   ├── UTM18/{grid_id}_{year}.tif   (EPSG:32718)
-│   │   └── UTM19/{grid_id}_{year}.tif   (EPSG:32719)
-│   ├── stable/     UTM18/ UTM19/
-│   ├── transition/ UTM18/ UTM19/
-│   └── rare_classes/ UTM18/ UTM19/
-└── vector/                        ← GeoPackages por grupo y zona
-    ├── annual/
-    │   ├── UTM18/annual_samples_UTM18.gpkg
-    │   └── UTM19/annual_samples_UTM19.gpkg
-    ├── stable/     UTM18/ UTM19/
-    ├── transition/ UTM18/ UTM19/
-    └── rare_classes/ UTM18/ UTM19/
+├── raster/{annual|stable|transition|rare_classes}/UTM{18|19}/{year}.tif
+└── vector/{annual|stable|transition|rare_classes}/UTM{18|19}/*_samples_UTM*.gpkg
 ```
 
-Los GeoPackages se mantienen en la CRS nativa UTM (EPSG:32718 o EPSG:32719), coherente con la proyección esperada por SSL4EO-L.
+Un mosaico por año y zona UTM (homogéneo + mixto combinados). CRS nativa UTM del huso.
 
 ---
 
 ## 1. Verificar entradas
 
 ```bash
-cd /home/lserey/repositorios/LULC/etiquetado-muestras
+cd /home/lserey/repositorio/LULC/etiquetado-muestras
 bash cluster/run_check_inputs.sh
 ```
 
-Comprueba:
-- GeoJSON en `final_samples/UTM{18|19}/{homogeneo_2x2|mixto_3x3}/`
-- Plan en `intermediate_files/review/listado_revision_manual.csv`
-- Rasters C2 en `ancillary_data/landcover_col2/classification_{year}.tif`
-
-## 2. Piloto (5 rectángulos, solo anuales)
+## 2. Piloto (5 rectángulos anuales)
 
 ```bash
 bash cluster/run_pilot_anuales.sh
 ```
 
-Ejecuta en secuencia:
-- Extrae 5 rectángulos con sieve → `prod/labels/rectangulos/UTM18/` y `UTM19/`
-- Genera GeoPackages anuales → `prod/labels/anuales/UTM18/` y `UTM19/`
+## 3. Producción por grupo y zona
 
-Revisar en QGIS:
-```text
-prod/labels/vector/annual/UTM18/annual_samples_UTM18.gpkg
-prod/labels/vector/annual/UTM19/annual_samples_UTM19.gpkg
-```
+Cada script ejecuta sieve → GeoPackage para un grupo y un huso UTM:
 
-## 3. Pipeline completo
+| Grupo | Carpeta raster/vector | Script bash | SLURM |
+|-------|----------------------|-------------|-------|
+| anuales | `annual/` | `run_anuales_utm18.sh` | `labels_annual_utm18.slurm` |
+| estables | `stable/` | `run_estables_utm18.sh` | `labels_stable_utm18.slurm` |
+| transiciones | `transition/` | `run_transiciones_utm18.sh` | `labels_transition_utm18.slurm` |
+| clases_raras | `rare_classes/` | `run_clases_raras_utm18.sh` | `labels_rare_classes_utm18.slurm` |
 
-```bash
-bash cluster/run_all_by_group.sh
-```
-
-Equivalente a:
-
-### Paso 1 — Extraer rectángulos con sieve
+(Misma tabla con `utm19` para UTM19.)
 
 ```bash
-bash cluster/run_sieve.sh
+source cluster/activate_mb_labels.sh
+bash cluster/run_estables_utm18.sh
 ```
 
-O manualmente:
+## 4. Enviar jobs SLURM
 
 ```bash
-python scripts/02_extract_sieve_rectangles.py \
-  --samples-dir   /home/lserey/mapbiomas_land/prod/samples \
-  --landcover-dir /home/lserey/mapbiomas_land/ancillary_data/landcover_col2 \
-  --labels-dir    /home/lserey/mapbiomas_land/prod/labels \
-  --sieve-size    9 \
-  --overwrite
+mkdir -p /home/lserey/logs
+
+# Pendientes: stable + transition + rare
+bash cluster/submit_labels_groups.sh
+
+# Incluir annual (re-ejecución)
+bash cluster/submit_labels_groups.sh --all
+
+# Un grupo
+bash cluster/submit_labels_groups.sh stable
+sbatch cluster/labels_transition_utm19.slurm
 ```
 
-`--sieve-size` es el número mínimo de píxeles de un parche para no ser eliminado. Con `0` se desactiva.
+Memoria SLURM: **32G** (annual, stable), **64G** (transition, rare_classes).
 
-### Paso 2 — Generar GeoPackages
+Logs en `/home/lserey/logs/labels_{grupo}_utm{18|19}_JOBID.{out,err}`.
 
-```bash
-bash cluster/run_gpkg.sh
-```
-
-O por grupo individual:
-
-```bash
-python scripts/03_generate_labels_gpkg.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --labels-dir  /home/lserey/mapbiomas_land/prod/labels \
-  --only-groups anuales \
-  --overwrite
-```
-
-## 4. Opciones adicionales
-
-### Filtrar por zona UTM
-
-```bash
-python scripts/02_extract_sieve_rectangles.py ... --only-zones UTM18
-python scripts/03_generate_labels_gpkg.py     ... --only-zones UTM18
-```
-
-### Conservar parches individuales (sin disolver por clase)
-
-```bash
-python scripts/03_generate_labels_gpkg.py \
-  --samples-dir /home/lserey/mapbiomas_land/prod/samples \
-  --labels-dir  /home/lserey/mapbiomas_land/prod/labels \
-  --only-groups anuales \
-  --patches \
-  --overwrite
-```
-
-### Filtrar por año
+## 5. Opciones adicionales (CLI)
 
 ```bash
 python scripts/02_extract_sieve_rectangles.py ... --only-years 2020 2021
 python scripts/03_generate_labels_gpkg.py     ... --only-years 2020 2021
+python scripts/03_generate_labels_gpkg.py     ... --patches   # parches sin disolver
 ```

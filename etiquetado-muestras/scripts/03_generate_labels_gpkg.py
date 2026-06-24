@@ -3,15 +3,15 @@
 """
 Genera GeoPackages de etiquetas C2 desde los rasters sieved pre-extraídos.
 
-Lee los clips en prod/labels/raster/{grupo}/{zona}/{grid_id}_{year}.tif,
-poligoniza, enriquece con taxonomía y metadatos del plan, y escribe un
-GeoPackage por grupo y zona UTM en prod/labels/vector/{grupo}/{zona}/.
+Lee los mosaicos anuales sieved en prod/labels/raster/{grupo}/{zona}/{year}.tif,
+recorta por rectángulo de muestra, poligoniza, enriquece con taxonomía y metadatos
+del plan, y escribe un GeoPackage por grupo y zona UTM en prod/labels/vector/{grupo}/{zona}/.
 
 Salida:
   prod/labels/
   ├── raster/
-  │   ├── annual/UTM18/{grid_id}_{year}.tif
-  │   └── annual/UTM19/{grid_id}_{year}.tif
+  │   ├── annual/UTM18/{year}.tif
+  │   └── annual/UTM19/{year}.tif
   └── vector/
       ├── annual/UTM18/annual_samples_UTM18.gpkg
       └── annual/UTM19/annual_samples_UTM19.gpkg
@@ -30,7 +30,8 @@ import numpy as np
 import pandas as pd
 import rasterio
 from rasterio.features import shapes
-from shapely.geometry import shape
+from rasterio.mask import mask as raster_mask
+from shapely.geometry import mapping, shape
 from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -119,11 +120,50 @@ def build_grid_zone(samples_dir: Path) -> dict[str, str]:
     return grid_zone
 
 
-def polygonize_tif(tif_path: Path, utm_crs: str, area_crs: str, keep_patches: bool) -> gpd.GeoDataFrame:
+def build_rects_by_zone(samples_dir: Path) -> dict[str, gpd.GeoDataFrame]:
+    """Rectángulos de muestra por zona UTM (homogeneo + mixto combinados)."""
+    frames: dict[str, list[gpd.GeoDataFrame]] = {}
+    for f in discover_selection_geojsons(samples_dir):
+        zone = infer_utm_zone(f)
+        crs = infer_selection_crs(f)
+        gdf = gpd.read_file(f, columns=["grid_id", "geometry"])
+        gdf = gdf.set_crs(crs) if gdf.crs is None else gdf.to_crs(crs)
+        gdf["grid_id"] = gdf["grid_id"].astype(str)
+        frames.setdefault(zone, []).append(gdf)
+    return {
+        zone: gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), geometry="geometry", crs=gdfs[0].crs)
+        for zone, gdfs in frames.items()
+    }
+
+
+def resolve_year_tif(tif_dir: Path, grid_id: str, year: int) -> Path | None:
+    year_path = tif_dir / f"{year}.tif"
+    if year_path.exists():
+        return year_path
+    legacy = tif_dir / f"{grid_id}_{year}.tif"
+    if legacy.exists():
+        return legacy
+    return None
+
+
+def polygonize_tif(
+    tif_path: Path,
+    utm_crs: str,
+    area_crs: str,
+    keep_patches: bool,
+    clip_geom=None,
+) -> gpd.GeoDataFrame:
     with rasterio.open(tif_path) as src:
-        data = src.read(1).astype(np.int32)
-        transform = src.transform
         nodata = src.nodata or 0
+        if clip_geom is not None:
+            arr, transform = raster_mask(
+                src, [mapping(clip_geom)], crop=True, filled=True,
+                all_touched=False, nodata=nodata,
+            )
+            data = arr[0].astype(np.int32)
+        else:
+            data = src.read(1).astype(np.int32)
+            transform = src.transform
         valid_mask = (data != int(nodata)) & np.isfinite(data)
 
     if not valid_mask.any():
@@ -158,7 +198,14 @@ def polygonize_tif(tif_path: Path, utm_crs: str, area_crs: str, keep_patches: bo
     return gdf
 
 
-def process_group_zone(group_name: str, zone: str, work: pd.DataFrame, rects_dir: Path, args) -> None:
+def process_group_zone(
+    group_name: str,
+    zone: str,
+    work: pd.DataFrame,
+    rects_dir: Path,
+    rects_by_zone: dict[str, gpd.GeoDataFrame],
+    args,
+) -> None:
     utm_crs = UTM_CRS[zone]                         # zone es "UTM18" o "UTM19"
     group_folder = GROUP_FOLDER_MAP.get(group_name, group_name)
     gpkg_base = GPKG_NAME_MAP.get(group_name, group_name)
@@ -178,15 +225,28 @@ def process_group_zone(group_name: str, zone: str, work: pd.DataFrame, rects_dir
         return
 
     tif_dir = rects_dir / group_folder / zone
+    zone_rects = rects_by_zone.get(zone)
     outputs = []
 
     for _, row in tqdm(sub.iterrows(), total=len(sub), desc=f"{group_name}/{zone}"):
-        tif_path = tif_dir / f"{row['grid_id']}_{row['review_year']}.tif"
-        if not tif_path.exists():
-            print(f"ADVERTENCIA: no existe TIF sieved: {tif_path}")
+        year = int(row["review_year"])
+        grid_id = str(row["grid_id"])
+        tif_path = resolve_year_tif(tif_dir, grid_id, year)
+        if tif_path is None:
+            print(f"ADVERTENCIA: no existe TIF sieved para {grid_id} año {year}")
             continue
 
-        gdf_one = polygonize_tif(tif_path, utm_crs, args.area_crs, keep_patches=bool(args.patches))
+        clip_geom = None
+        if tif_path.name == f"{year}.tif":
+            if zone_rects is None or grid_id not in zone_rects["grid_id"].values:
+                print(f"ADVERTENCIA: grid_id sin geometría en {zone}: {grid_id}")
+                continue
+            clip_geom = zone_rects.set_index("grid_id").loc[grid_id, "geometry"]
+
+        gdf_one = polygonize_tif(
+            tif_path, utm_crs, args.area_crs,
+            keep_patches=bool(args.patches), clip_geom=clip_geom,
+        )
         if gdf_one.empty:
             continue
 
@@ -286,6 +346,7 @@ def main() -> int:
     print(f"labels-dir:  {args.labels_dir}")
 
     grid_zone = build_grid_zone(args.samples_dir)
+    rects_by_zone = build_rects_by_zone(args.samples_dir)
     plan = load_plan(args.samples_dir, args.plan_name)
     work = expand_plan(plan, write_rare_copy=args.write_rare_copy)
     work["utm_zone"] = work["grid_id"].map(grid_zone)
@@ -296,7 +357,13 @@ def main() -> int:
     if args.only_groups:
         work = work[work["label_group"].isin(args.only_groups)].copy()
     if args.only_zones:
-        work = work[work["utm_zone"].isin(args.only_zones)].copy()
+        zones = []
+        for z in args.only_zones:
+            z = z.upper()
+            if not z.startswith("UTM"):
+                z = f"UTM{z}"
+            zones.append(z)
+        work = work[work["utm_zone"].isin(zones)].copy()
     if args.max_rows:
         work = work.head(args.max_rows).copy()
 
@@ -316,7 +383,7 @@ def main() -> int:
     for group_name in active_groups:
         print(f"\n=== Grupo: {group_name} ===")
         for zone in active_zones:
-            process_group_zone(group_name, zone, work, rects_dir, args)
+            process_group_zone(group_name, zone, work, rects_dir, rects_by_zone, args)
 
     print("\nListo.")
     return 0
