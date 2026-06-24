@@ -5,9 +5,9 @@ Extrae cada rectángulo del raster anual C2, aplica filtro sieve para eliminar
 parches pequeños (ruido sal-y-pimienta) y guarda el clip como GeoTIFF en la
 CRS nativa UTM del rectángulo.
 
-Salida en prod/labels/rectangulos/:
-  utm18/{grid_id}_{year}.tif   — proyección EPSG:32718
-  utm19/{grid_id}_{year}.tif   — proyección EPSG:32719
+Salida en prod/labels/raster/{grupo}/{zona}/:
+  annual/UTM18/{grid_id}_{year}.tif   — proyección EPSG:32718
+  annual/UTM19/{grid_id}_{year}.tif   — proyección EPSG:32719
 
 El sieve se aplica ANTES de reproyectar para respetar el tamaño de píxel
 original del raster fuente.
@@ -45,6 +45,12 @@ from mb_labels.sample_paths import (  # noqa: E402
 DEFAULT_LABELS_DIR = Path("/home/lserey/mapbiomas_land/prod/labels")
 
 UTM_CRS = {"UTM18": "EPSG:32718", "UTM19": "EPSG:32719"}
+GROUP_FOLDER_MAP = {
+    "anuales": "annual",
+    "estables": "stable",
+    "transiciones": "transition",
+    "clases_raras": "rare_classes",
+}
 
 
 def parse_years(value) -> list[int]:
@@ -166,7 +172,12 @@ def parse_args():
         help="Tamaño mínimo de parche en píxeles para el filtro sieve (0 = desactivar).",
     )
     p.add_argument("--only-years", nargs="*", type=int, default=None)
-    p.add_argument("--only-zones", nargs="*", choices=["utm18", "utm19"], default=None)
+    p.add_argument("--only-zones", nargs="*", choices=["UTM18", "UTM19"], default=None)
+    p.add_argument(
+        "--label-group", default="anuales",
+        choices=list(GROUP_FOLDER_MAP.keys()),
+        help="Grupo de etiquetas a procesar (define subcarpeta de salida).",
+    )
     p.add_argument("--max-rows", type=int, default=None)
     p.add_argument("--overwrite", action="store_true")
     return p.parse_args()
@@ -200,7 +211,8 @@ def main() -> int:
     print(f"\nPares a procesar: {len(work)}")
     print(work["utm_zone"].value_counts().to_string())
 
-    out_base = args.labels_dir / "rectangulos"
+    group_folder = GROUP_FOLDER_MAP.get(args.label_group, args.label_group)
+    out_base = args.labels_dir / "raster" / group_folder
     for zone in rects_by_zone:
         (out_base / zone).mkdir(parents=True, exist_ok=True)
 

@@ -20,15 +20,20 @@
 
 ```text
 prod/labels/
-├── rectangulos/               ← rasters sieved por rectángulo-año
-│   ├── UTM18/{grid_id}_{year}.tif   (EPSG:32718)
-│   └── UTM19/{grid_id}_{year}.tif   (EPSG:32719)
-├── anuales/
-│   ├── UTM18/subdivisiones_C2_anuales_UTM18.gpkg
-│   └── UTM19/subdivisiones_C2_anuales_UTM19.gpkg
-├── estables/    UTM18/ UTM19/
-├── transiciones/ UTM18/ UTM19/
-└── clases_raras/ UTM18/ UTM19/
+├── raster/                        ← clips sieved por rectángulo-año
+│   ├── annual/
+│   │   ├── UTM18/{grid_id}_{year}.tif   (EPSG:32718)
+│   │   └── UTM19/{grid_id}_{year}.tif   (EPSG:32719)
+│   ├── stable/     UTM18/ UTM19/
+│   ├── transition/ UTM18/ UTM19/
+│   └── rare_classes/ UTM18/ UTM19/
+└── vector/                        ← GeoPackages por grupo y zona
+    ├── annual/
+    │   ├── UTM18/annual_samples_UTM18.gpkg
+    │   └── UTM19/annual_samples_UTM19.gpkg
+    ├── stable/     UTM18/ UTM19/
+    ├── transition/ UTM18/ UTM19/
+    └── rare_classes/ UTM18/ UTM19/
 ```
 
 Los GeoPackages se mantienen en la CRS nativa UTM (EPSG:32718 o EPSG:32719), coherente con la proyección esperada por SSL4EO-L.
@@ -59,8 +64,8 @@ Ejecuta en secuencia:
 
 Revisar en QGIS:
 ```text
-prod/labels/anuales/UTM18/subdivisiones_C2_anuales_UTM18.gpkg
-prod/labels/anuales/UTM19/subdivisiones_C2_anuales_UTM19.gpkg
+prod/labels/vector/annual/UTM18/annual_samples_UTM18.gpkg
+prod/labels/vector/annual/UTM19/annual_samples_UTM19.gpkg
 ```
 
 ## 3. Pipeline completo

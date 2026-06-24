@@ -15,6 +15,7 @@ python scripts/02_extract_sieve_rectangles.py \
   --landcover-dir "${LANDCOVER_DIR}" \
   --labels-dir    "${LABELS_DIR}" \
   --only-zones    UTM18 \
+  --label-group   anuales \
   --sieve-size    9 \
   --overwrite
 
@@ -31,5 +32,5 @@ python scripts/03_generate_labels_gpkg.py \
 
 echo ""
 echo "Listo. Salida en:"
-echo "  ${LABELS_DIR}/rectangulos/UTM18/"
-echo "  ${LABELS_DIR}/anuales/UTM18/subdivisiones_C2_anuales_UTM18.gpkg"
+echo "  ${LABELS_DIR}/raster/annual/UTM18/"
+echo "  ${LABELS_DIR}/vector/annual/UTM18/annual_samples_UTM18.gpkg"

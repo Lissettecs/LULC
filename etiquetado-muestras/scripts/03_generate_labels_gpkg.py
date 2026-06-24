@@ -3,18 +3,18 @@
 """
 Genera GeoPackages de etiquetas C2 desde los rasters sieved pre-extraídos.
 
-Lee los clips en prod/labels/rectangulos/{utm_zone}/{grid_id}_{year}.tif,
+Lee los clips en prod/labels/raster/{grupo}/{zona}/{grid_id}_{year}.tif,
 poligoniza, enriquece con taxonomía y metadatos del plan, y escribe un
-GeoPackage por grupo y zona UTM en prod/labels/{grupo}/{utm_zone}/.
+GeoPackage por grupo y zona UTM en prod/labels/vector/{grupo}/{zona}/.
 
 Salida:
   prod/labels/
-  ├── anuales/
-  │   ├── utm18/subdivisiones_C2_anuales_utm18.gpkg
-  │   └── utm19/subdivisiones_C2_anuales_utm19.gpkg
-  ├── estables/   utm18/ utm19/
-  ├── transiciones/ utm18/ utm19/
-  └── clases_raras/ utm18/ utm19/
+  ├── raster/
+  │   ├── annual/UTM18/{grid_id}_{year}.tif
+  │   └── annual/UTM19/{grid_id}_{year}.tif
+  └── vector/
+      ├── annual/UTM18/annual_samples_UTM18.gpkg
+      └── annual/UTM19/annual_samples_UTM19.gpkg
 
 Los GeoPackages se mantienen en la CRS nativa UTM del rectángulo, coherente
 con la proyección usada por SSL4EO-L.
@@ -51,6 +51,18 @@ DEFAULT_LABELS_DIR = Path("/home/lserey/mapbiomas_land/prod/labels")
 UTM_CRS = {"UTM18": "EPSG:32718", "UTM19": "EPSG:32719"}
 GROUP_MAP = {"anual": "anuales", "estable": "estables", "transicion": "transiciones"}
 ALL_GROUPS = ["anuales", "estables", "transiciones", "clases_raras"]
+GROUP_FOLDER_MAP = {
+    "anuales": "annual",
+    "estables": "stable",
+    "transiciones": "transition",
+    "clases_raras": "rare_classes",
+}
+GPKG_NAME_MAP = {
+    "anuales": "annual_samples",
+    "estables": "stable_samples",
+    "transiciones": "transition_samples",
+    "clases_raras": "rare_class_samples",
+}
 
 
 def parse_years(value) -> list[int]:
@@ -148,12 +160,14 @@ def polygonize_tif(tif_path: Path, utm_crs: str, area_crs: str, keep_patches: bo
 
 def process_group_zone(group_name: str, zone: str, work: pd.DataFrame, rects_dir: Path, args) -> None:
     utm_crs = UTM_CRS[zone]                         # zone es "UTM18" o "UTM19"
-    out_dir = args.labels_dir / group_name / zone
+    group_folder = GROUP_FOLDER_MAP.get(group_name, group_name)
+    gpkg_base = GPKG_NAME_MAP.get(group_name, group_name)
+    out_dir = args.labels_dir / "vector" / group_folder / zone
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    suffix = "patches" if args.patches else group_name
-    out_gpkg = out_dir / f"subdivisiones_C2_{suffix}_{zone}.gpkg"
-    layer = f"subdivisiones_C2_{suffix}_{zone}"
+    suffix = f"{gpkg_base}_patches" if args.patches else gpkg_base
+    out_gpkg = out_dir / f"{suffix}_{zone}.gpkg"
+    layer = f"{suffix}_{zone}"
 
     if out_gpkg.exists() and not args.overwrite:
         print(f"  [{group_name}/{zone}] Ya existe, se omite: {out_gpkg.name}")
@@ -163,7 +177,7 @@ def process_group_zone(group_name: str, zone: str, work: pd.DataFrame, rects_dir
     if sub.empty:
         return
 
-    tif_dir = rects_dir / zone
+    tif_dir = rects_dir / group_folder / zone
     outputs = []
 
     for _, row in tqdm(sub.iterrows(), total=len(sub), desc=f"{group_name}/{zone}"):
@@ -240,7 +254,7 @@ def process_group_zone(group_name: str, zone: str, work: pd.DataFrame, rects_dir
         .reset_index()
     )
     summary["area_ha"] = summary["area_ha"].round(2)
-    summary.to_csv(out_dir / f"resumen_C2_{group_name}_{zone}.csv", index=False, encoding="utf-8-sig")
+    summary.to_csv(out_dir / f"resumen_{gpkg_base}_{zone}.csv", index=False, encoding="utf-8-sig")
 
 
 def parse_args():
@@ -295,7 +309,7 @@ def main() -> int:
     print("Por zona:")
     print(work["utm_zone"].value_counts().to_string())
 
-    rects_dir = args.labels_dir / "rectangulos"
+    rects_dir = args.labels_dir / "raster"
     active_groups = sorted(work["label_group"].unique())
     active_zones = sorted(work["utm_zone"].unique())
 
