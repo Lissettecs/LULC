@@ -1,20 +1,20 @@
 # MapBiomas C2 Labels Cluster
 
-Generación de **mosaicos raster sieved** y **GeoPackages de etiquetas** desde landcover MapBiomas Chile Collection 2 (GeoTIFF en cluster).
+Generation of **sieved raster mosaics** and **label GeoPackages** from MapBiomas Chile Collection 2 landcover (GeoTIFFs on cluster).
 
-Pipeline en dos pasos por **grupo temporal** y **zona UTM** (EPSG:32718 / EPSG:32719), coherente con SSL4EO-L.
+Two-step pipeline per **temporal group** and **UTM zone** (EPSG:32718 / EPSG:32719), consistent with SSL4EO-L.
 
-## Estructura del repositorio
+## Repository structure
 
 ```text
-etiquetado-muestras/
+labeling-samples/
 ├── src/mb_labels/
-│   ├── taxonomy.py          ← taxonomía N1/N2/N3 de clases C2
-│   └── sample_paths.py      ← descubrimiento de GeoJSON y plan
+│   ├── taxonomy.py          ← C2 N1/N2/N3 taxonomy lookup
+│   └── sample_paths.py      ← GeoJSON and review plan discovery
 ├── scripts/
 │   ├── 00_check_inputs.py
-│   ├── 02_extract_sieve_rectangles.py   ← paso 1: mosaicos {year}.tif
-│   └── 03_generate_labels_gpkg.py       ← paso 2: GeoPackages
+│   ├── 02_extract_sieve_rectangles.py   ← step 1: sieved mosaics {year}.tif
+│   └── 03_generate_labels_gpkg.py       ← step 2: GeoPackages
 ├── cluster/
 │   ├── activate_mb_labels.sh
 │   ├── run_check_inputs.sh
@@ -23,10 +23,10 @@ etiquetado-muestras/
 │   ├── labels_{annual|stable|transition|rare_classes}_utm{18|19}.slurm
 │   └── submit_labels_groups.sh
 └── docs/
-    └── flujo_cluster.md
+    └── cluster_workflow.md
 ```
 
-## Entradas en cluster
+## Inputs on cluster
 
 ```text
 /home/lserey/mapbiomas_land/
@@ -36,7 +36,7 @@ etiquetado-muestras/
 └── ancillary_data/landcover_col2/classification_{year}.tif
 ```
 
-## Salidas en prod/labels/
+## Outputs in prod/labels/
 
 ```text
 prod/labels/
@@ -52,43 +52,43 @@ prod/labels/
     └── rare_classes/UTM18/rare_class_samples_UTM18.gpkg
 ```
 
-(Misma estructura para UTM19.)
+(Same structure for UTM19.)
 
-## Instalación
+## Installation
 
 ```bash
-cd /home/lserey/repositorio/LULC/etiquetado-muestras
+cd /home/lserey/repositorio/LULC/labeling-samples
 mamba create -n mb_labels python=3.11 --file requirements.txt -c conda-forge
 ```
 
-## Uso rápido
+## Quick start
 
 ```bash
 source cluster/activate_mb_labels.sh
 
-# Verificar insumos
+# Verify inputs
 bash cluster/run_check_inputs.sh
 
-# Piloto (5 rectángulos anuales)
+# Pilot run (5 annual rectangles)
 bash cluster/run_pilot_anuales.sh
 
-# Producción vía SLURM (stable + transition + rare)
+# Production via SLURM (stable + transition + rare)
 mkdir -p /home/lserey/logs
 bash cluster/submit_labels_groups.sh
 
-# O un job individual
+# Or a single job
 sbatch cluster/labels_stable_utm18.slurm
 ```
 
-## Parámetros clave
+## Key parameters
 
-| Script | Parámetro | Default | Descripción |
+| Script | Parameter | Default | Description |
 |--------|-----------|---------|-------------|
 | `02_extract_sieve_rectangles.py` | `--label-group` | anuales | `anuales`, `estables`, `transiciones`, `clases_raras` |
-| `02_extract_sieve_rectangles.py` | `--sieve-size` | 9 | Mínimo píxeles por parche (0 = off) |
-| `02_extract_sieve_rectangles.py` | `--only-zones` | todas | `UTM18`, `UTM19` |
-| `03_generate_labels_gpkg.py` | `--only-groups` | todos | Mismos grupos que arriba |
-| `03_generate_labels_gpkg.py` | `--only-zones` | todas | `utm18`, `utm19` |
-| `03_generate_labels_gpkg.py` | `--write-rare-copy` | off | Requerido para `clases_raras` |
+| `02_extract_sieve_rectangles.py` | `--sieve-size` | 9 | Minimum pixels per patch (0 = off) |
+| `02_extract_sieve_rectangles.py` | `--only-zones` | all | `UTM18`, `UTM19` |
+| `03_generate_labels_gpkg.py` | `--only-groups` | all | Same groups as above |
+| `03_generate_labels_gpkg.py` | `--only-zones` | all | `UTM18`, `UTM19` |
+| `03_generate_labels_gpkg.py` | `--write-rare-copy` | off | Required for `clases_raras` |
 
-Ver `docs/flujo_cluster.md` para el flujo completo en cluster.
+See `docs/cluster_workflow.md` for the full cluster workflow.
