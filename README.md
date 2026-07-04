@@ -22,6 +22,18 @@ English version of the same SSL4EO-L sample generation workflow (READMEs and fol
 
 Documentation and execution in [ssl4eo-sample-generation/README.md](ssl4eo-sample-generation/README.md).
 
+### [labeling-samples/](labeling-samples/) (English)
+
+Generación de mosaicos raster sieved y GeoPackages de etiquetas desde landcover MapBiomas Chile Colección 2 (pipeline en cluster, coherente con SSL4EO-L).
+
+Documentación en [labeling-samples/README.md](labeling-samples/README.md).
+
+### [segmentacion_etiquetas/](segmentacion_etiquetas/)
+
+Calibración visual de segmentación Felzenszwalb sobre mosaicos NIR/SWIR1/red: grid de parámetros, quicklooks y explorador HTML antes de atribuir clases a polígonos.
+
+Documentación en [segmentacion_etiquetas/README.md](segmentacion_etiquetas/README.md).
+
 ## Datos generados
 
 No versionar datos pesados ni intermedios (rasters, shapefiles, GeoJSON, GeoPackage, ZIP, CSV de salida, etc.). Los productos se regeneran con los scripts o se almacenan fuera de Git.
