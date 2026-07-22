@@ -1,0 +1,50 @@
+# Rutas canónicas — segmentación y etiquetado MapBiomas (Chile).
+# Los datos pesados viven en el cluster; el código vive en este repositorio.
+
+data_root: /home/lserey/mapbiomas_land/test/image_segmentation
+
+repo_root: /home/lserey/repositorio/coverage_test/labeling/mapbiomas_segmentation
+
+python:
+  labels: /home/lserey/.conda/envs/mb_labels/bin/python
+  coverage: /home/lserey/.conda/envs/mb_coverage/bin/python
+
+tiles_mgrs_2010:
+  - 18FXH
+  - 18GXP
+  - 18HYD
+  - 19HCD
+  - 19JCJ
+  - 19KDU
+
+inputs:
+  mosaics: "{data_root}/nir_swir1_red_normalized_mosaics"
+  landcover: "{data_root}/landcover_tiles"
+  mgrs: "{data_root}/mgrs_tiles.gpkg"
+
+outputs:
+  segmentation:
+    felzenszwalb: "{data_root}/seg_felzenszwalb"
+    felzenszwalb_rf_n: "{data_root}/seg_felzenszwalb_rf_n"
+    slic_pipeline_a: "{data_root}/seg_slic/pipeline_a"
+    slic_pipeline_b: "{data_root}/seg_slic/pipeline_b"
+  labeling:
+    tau95: "{data_root}/labeling_tau95"
+    tau90: "{data_root}/labeling_tau090"
+    tau85: "{data_root}/labeling_tau085"
+    tau80: "{data_root}/labeling_tau080"
+    overlays: "{data_root}/labeling_overlays"
+  viewers: "{data_root}"
+  logs: "{data_root}/logs"
+
+labeling:
+  segmenters_production:
+    - id: felzenszwalb_s50_sig01
+      segments: "{data_root}/seg_felzenszwalb/seg_{tile}_2010_s50_sig0.1.tif"
+    - id: slic_s50_sig01_ragp10
+      segments: "{data_root}/seg_slic/pipeline_a/seg_{tile}_2010_s50_sig0.1_ragp10.tif"
+  tau_purity:
+    - 0.95
+    - 0.90
+    - 0.85
+    - 0.80

@@ -1,0 +1,24 @@
+# Logs y artefactos locales
+logs/
+*.out
+*.err
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Datos (nunca en git — viven en mapbiomas_land)
+*.tif
+*.tiff
+*.gpkg
+*.png
+*.html
+*.db
+*.csv
+
+# IDE
+.idea/
+.vscode/

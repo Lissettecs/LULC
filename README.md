@@ -39,3 +39,9 @@ Documentación en [segmentacion_etiquetas/README.md](segmentacion_etiquetas/READ
 No versionar datos pesados ni intermedios (rasters, shapefiles, GeoJSON, GeoPackage, ZIP, CSV de salida, etc.). Los productos se regeneran con los scripts o se almacenan fuera de Git.
 
 Ver reglas de exclusión en [.gitignore](.gitignore).
+
+### [mapbiomas_segmentation/](mapbiomas_segmentation/)
+
+Segmentación de imágenes (Felzenszwalb, SLIC) y etiquetado MapBiomas Collection 2 sobre tiles MGRS: asignación por pureza τ, fusión de polígonos adyacentes, visualizadores HTML y jobs SLURM.
+
+Documentación en [mapbiomas_segmentation/README.md](mapbiomas_segmentation/README.md). Los rasters y GPKG de salida viven en el cluster (`mapbiomas_land/test/image_segmentation/`), no en Git.
