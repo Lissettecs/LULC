@@ -70,4 +70,5 @@ Próximo paso (pendiente): actualizar imports/`DATA_ROOT` en todos los módulos 
 
 - [Layout de datos en cluster](docs/DATA_LAYOUT.md)
 - [Catálogo de experimentos](docs/EXPERIMENT.md)
+- [Resumen metodológico (segmentación + etiquetado τ)](docs/RESUMEN_METODOLOGICO.md)
 - [Especificación etiquetado](docs/labeling/SPEC.md)

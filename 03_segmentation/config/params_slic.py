@@ -1,0 +1,13 @@
+"""Fixed SLIC + RAG parameters."""
+
+SLIC_SCALE = 50
+SLIC_SIGMA = 0.1
+SLIC_COMPACTNESS = 10.0
+BUFFER_PX = 100
+RAG_PERCENTILE = 10
+
+OUTPUT_NODATA = -9999.0
+MOSAIC_NODATA = -9999.0
+
+# 30 m pixels → hectares per pixel
+PIXEL_AREA_HA = 0.09
