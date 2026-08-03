@@ -53,6 +53,14 @@ from config.params_slic import (
     SLIC_SIGMA,
 )
 from config.paths import mosaic_root, output_dir, masked_mosaic_path
+from io_mosaico import (
+    leer_bandas_recorte as _read_bands,
+    leer_bandas_ventana as _read_bands_window,
+    leer_ventana_ampliada as _read_expanded_window,
+    recortar_centro as _crop_center,
+    ventana_con_buffer as _buffer_window,
+    ventana_rectangulo as _rectangle_window,
+)
 from rag import merge_rag_threshold
 from rectangles import build_plan, filter_plan, save_plan, iter_plan_rows
 
@@ -68,43 +76,6 @@ def _mosaic_or_raise(mosaic_root_dir: Path, tile: str, year: int) -> Path:
             f"No masked mosaic for tile {tile} year={year} in {mosaic_root_dir}"
         )
     return path
-
-
-def _rectangle_window(src: rasterio.io.DatasetReader, geom) -> Window:
-    win = geometry_window(src, [geom], pad_x=0, pad_y=0)
-    return win.round_offsets().round_lengths()
-
-
-def _buffer_window(
-    win: Window,
-    buffer_px: int,
-    raster_w: int,
-    raster_h: int,
-) -> tuple[Window, dict[str, int]]:
-    col_off = int(win.col_off)
-    row_off = int(win.row_off)
-    width = int(win.width)
-    height = int(win.height)
-    col0 = max(0, col_off - buffer_px)
-    row0 = max(0, row_off - buffer_px)
-    col1 = min(raster_w, col_off + width + buffer_px)
-    row1 = min(raster_h, row_off + height + buffer_px)
-    effective = {
-        "left": col_off - col0,
-        "right": col1 - (col_off + width),
-        "top": row_off - row0,
-        "bottom": row1 - (row_off + height),
-    }
-    return Window(col0, row0, col1 - col0, row1 - row0), effective
-
-
-def _crop_center(arr: np.ndarray, buffer_effective: dict[str, int]) -> np.ndarray:
-    t = buffer_effective
-    row0 = t["top"]
-    row1 = arr.shape[0] - t["bottom"] if t["bottom"] else arr.shape[0]
-    col0 = t["left"]
-    col1 = arr.shape[1] - t["right"] if t["right"] else arr.shape[1]
-    return arr[row0:row1, col0:col1].copy()
 
 
 def _relabel_connected_components(labels: np.ndarray, valid: np.ndarray) -> np.ndarray:
@@ -123,36 +94,6 @@ def _relabel_connected_components(labels: np.ndarray, valid: np.ndarray) -> np.n
         out[mask_seg] = cc[mask_seg]
         next_id = int(out.max()) + 1
     return out
-
-
-def _read_bands_window(
-    src: rasterio.io.DatasetReader,
-    window: Window,
-    band_indices: list[int],
-) -> np.ndarray:
-    return np.stack(
-        [src.read(i, window=window).astype(np.float32) for i in band_indices],
-        axis=-1,
-    )
-
-
-def _read_expanded_window(
-    src: rasterio.io.DatasetReader,
-    geom,
-    band_indices: list[int],
-    buffer_px: int,
-) -> tuple[np.ndarray, np.ndarray, Window, dict[str, int], rasterio.Affine]:
-    """Read mosaic with perimeter buffer; return arrays before cropping to the rectangle."""
-    win_rect = _rectangle_window(src, geom)
-    win_buf, buffer_effective = _buffer_window(
-        win_rect, buffer_px, src.width, src.height
-    )
-    stack_buf = _read_bands_window(src, win_buf, band_indices)
-    valid_buf = np.all(np.isfinite(stack_buf), axis=-1) & (
-        stack_buf != MOSAIC_NODATA
-    ).all(axis=-1)
-    transform_rect = src.window_transform(win_rect)
-    return stack_buf, valid_buf, win_rect, buffer_effective, transform_rect
 
 
 def _finalize_rectangle_crop(
@@ -175,22 +116,7 @@ def _finalize_rectangle_crop(
     return _relabel_connected_components(labels, valid), valid
 
 
-def _read_bands(
-    src: rasterio.io.DatasetReader,
-    geom,
-    band_indices: list[int],
-) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Return (H,W,C) array, valid mask, and window metadata."""
-    out_image, out_transform = mask(src, [geom], crop=True, filled=True, nodata=MOSAIC_NODATA)
-    stack = np.stack([out_image[i - 1].astype(np.float32) for i in band_indices], axis=-1)
-    valid = np.all(np.isfinite(stack), axis=-1) & (stack != MOSAIC_NODATA).all(axis=-1)
-    meta = {
-        "transform": out_transform,
-        "width": stack.shape[1],
-        "height": stack.shape[0],
-        "crs": src.crs.to_string(),
-    }
-    return stack, valid, meta
+_finalizar_recorte_rectangulo = _finalize_rectangle_crop
 
 
 def _prepare_slic_image(feats: np.ndarray, valid: np.ndarray) -> np.ndarray:
@@ -204,6 +130,9 @@ def _prepare_slic_image(feats: np.ndarray, valid: np.ndarray) -> np.ndarray:
         band[~valid] = median
         out_arr[..., c] = band
     return out_arr
+
+
+_preparar_imagen_slic = _prepare_slic_image
 
 
 def run_slic(feats: np.ndarray, valid: np.ndarray) -> np.ndarray:
@@ -305,6 +234,8 @@ def process_rectangle(
     seg_bands: list[tuple[str, int]],
     sig_bands: list[tuple[str, int]],
     buffer_px: int = BUFFER_PX,
+    *,
+    caracterizar: bool = True,
 ) -> dict:
     grid_id = row["grid_id"]
     tile = row["_tile"]
@@ -409,6 +340,35 @@ def process_rectangle(
     }
     summary_path = rect_dir / f"{grid_id}_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    if caracterizar:
+        from caracterizar_segmentos import caracterizar_rectangulo, leer_stack_rectangulo
+
+        stack_full, _, nombres_bandas = leer_stack_rectangulo(
+            mosaic_path,
+            row.geometry,
+            buffer_px=buffer_px,
+            buffer_efectivo=buffer_effective,
+        )
+        params_seg = {
+            "slic_scale": SLIC_SCALE,
+            "slic_sigma": SLIC_SIGMA,
+            "slic_compactness": SLIC_COMPACTNESS,
+            "rag_percentil": RAG_PERCENTILE,
+            "buffer_px": buffer_px,
+        }
+        caract = caracterizar_rectangulo(
+            etiquetas=labels,
+            valido=valid,
+            stack=stack_full,
+            nombres_bandas=nombres_bandas,
+            transform=meta["transform"],
+            crs=meta["crs"],
+            fila=row,
+            params_segmentacion=params_seg,
+        )
+        summary["caracterizacion"] = caract
+
     return summary
 
 
@@ -465,6 +425,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=BUFFER_PX,
         help="Perimeter buffer in pixels before SLIC (0 = none)",
+    )
+    p.add_argument(
+        "--no-characterize",
+        "--sin-caracterizar",
+        action="store_true",
+        dest="no_characterize",
+        help="Skip characterization stage (review GPKG + features Parquet)",
     )
     return p.parse_args(argv)
 
@@ -523,6 +490,11 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     print(f"Segmenting {sum(len(g) for g in groups)} rectangle(s)…")
 
+    if not args.no_characterize:
+        from caracterizar_segmentos import DIR_SALIDA_BASE
+
+        print(f"  Characterization → {DIR_SALIDA_BASE}/{{tile}}/{{grid_id}}/")
+
     results = []
     errors = []
     skipped = res["n_already_processed"] if skip_existing else 0
@@ -539,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
                     seg_bands,
                     sig_bands,
                     buffer_px=args.buffer_px,
+                    caracterizar=not args.no_characterize,
                 )
                 print(f"     OK: {rect_result['n_segments']} segments", flush=True)
                 results.append(rect_result)

@@ -1,4 +1,4 @@
-"""Load and filter rectangles from the revision plan."""
+"""Load and filter SSL4EO rectangles from the revision plan."""
 
 from __future__ import annotations
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Build pending rectangle list for SLURM array (one grid_id per line).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
 
-PYTHON="${PYTHON:-/home/lserey/.conda/envs/mb_coverage/bin/python}"
-MAPBIOMAS_ROOT="${MAPBIOMAS_ROOT:-/home/lserey/mapbiomas_land}"
+PYTHON="${PYTHON:-python3}"
+MAPBIOMAS_ROOT="${MAPBIOMAS_ROOT:?Defina MAPBIOMAS_ROOT}"
 REV_YEAR="${REV_YEAR:-2015}"
 YEAR="${YEAR:-${REV_YEAR}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${MAPBIOMAS_ROOT}/prod/segmentacion_slic_rev${REV_YEAR}}"
@@ -40,7 +39,5 @@ ids = [
 ]
 path = Path(os.environ["LIST"])
 path.write_text("\n".join(ids) + ("\n" if ids else ""), encoding="utf-8")
-print(f"Wrote {len(ids)} rectangles → {path}")
-if ids:
-    print(f"SLURM array: --array=0-{len(ids) - 1}")
+print(f"Pendientes segmentación: {len(ids)} → {path}")
 PY

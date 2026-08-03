@@ -1,36 +1,47 @@
 #!/usr/bin/env bash
-# Submit parallel segmentation array on SLURM (partition main).
+# Submit SLURM segmentation array (one rectangle per task).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
 
 REV_YEAR="${REV_YEAR:-2015}"
+YEAR="${YEAR:-${REV_YEAR}}"
 ARRAY_THROTTLE="${ARRAY_THROTTLE:-16}"
+MAPBIOMAS_ROOT="${MAPBIOMAS_ROOT:?Set MAPBIOMAS_ROOT}"
 
 ./jobs/prepare_segmentation_array.sh
 
-MAPBIOMAS_ROOT="${MAPBIOMAS_ROOT:-/home/lserey/mapbiomas_land}"
 OUTPUT_DIR="${OUTPUT_DIR:-${MAPBIOMAS_ROOT}/prod/segmentacion_slic_rev${REV_YEAR}}"
-LIST="${LIST:-${OUTPUT_DIR}/logs/pending_rects_rev${REV_YEAR}.lst}"
+LOG_DIR="${LOG_DIR:-${OUTPUT_DIR}/logs}"
+mkdir -p "${LOG_DIR}"
+LIST="${LIST:-${LOG_DIR}/pending_rects_rev${REV_YEAR}.lst}"
 
-N=$(grep -cve '^[[:space:]]*$' "${LIST}" || true)
+N=$(grep -cve '^[[:space:]]*$' "${LIST}" 2>/dev/null || true)
 if (( N == 0 )); then
-  echo "Nothing pending — all rectangles already segmented."
+  echo "Segmentation: nothing pending (all rectangles with mosaic already processed)."
+  echo "CONSOL_JOB="
   exit 0
 fi
 
 MAX=$((N - 1))
-echo "Submitting array 0-${MAX}%${ARRAY_THROTTLE} (${N} rectangles)"
+echo "Submitting segmentation array 0-${MAX}%${ARRAY_THROTTLE} (${N} rectangles)"
 
 JOBID=$(sbatch --parsable \
+  --chdir="${REPO}" \
   --array="0-${MAX}%${ARRAY_THROTTLE}" \
-  --export=ALL,REV_YEAR="${REV_YEAR}" \
+  --output="${LOG_DIR}/slurm_seg_%A_%a.out" \
+  --error="${LOG_DIR}/slurm_seg_%A_%a.err" \
+  --export=ALL,REV_YEAR="${REV_YEAR}",YEAR="${YEAR}",SEGLABEL_REPO="${REPO}" \
   jobs/run_segmentation_array.slurm)
 
-echo "Array job: ${JOBID}"
 CONSOL=$(sbatch --parsable --dependency="afterok:${JOBID}" \
-  --export=ALL,REV_YEAR="${REV_YEAR}" \
+  --chdir="${REPO}" \
+  --output="${LOG_DIR}/slurm_seg_consolidate_%j.out" \
+  --error="${LOG_DIR}/slurm_seg_consolidate_%j.err" \
+  --export=ALL,REV_YEAR="${REV_YEAR}",YEAR="${YEAR}",SEGLABEL_REPO="${REPO}" \
   jobs/run_segmentation_consolidate.slurm)
-echo "Consolidate job: ${CONSOL} (after array OK)"
-echo "Monitor: squeue -u \$USER | grep seg_slic"
+
+echo "Segmentation array: ${JOBID}"
+echo "Consolidation:      ${CONSOL} (afterok:${JOBID})"
+echo "CONSOL_JOB=${CONSOL}"

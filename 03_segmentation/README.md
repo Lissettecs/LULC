@@ -1,9 +1,10 @@
 # Stage 03 — SLIC segmentation
 
-SLIC (scale 50, σ 0.1) + **RAG threshold p10** on sample rectangles, using **red, nir, swir1** from masked SBAND-184B mosaics (water + glaciers excluded).
+SLIC (scale 50, σ 0.1) + **RAG threshold p10** on SSL4EO sample rectangles, using
+**red, nir, swir1** from masked SBAND-184B mosaics (water + glaciers excluded).
 
 Each segment gets a **spectral signature** (mean blue, green, red, nir, swir1, swir2)
-and `variacion_espectral`: mean spatial standard deviation across those bands.
+and **`variacion_espectral`**: mean spatial standard deviation across those bands.
 
 ## Layout
 
@@ -18,40 +19,29 @@ and `variacion_espectral`: mean spatial standard deviation across those bands.
 ├── plan_segmentation.py
 ├── run_slic_segmentation.py
 ├── build_spectral_viewer.py
+├── consolidate_run_summary.py
 ├── rag.py
 └── jobs/
     ├── run_segmentation.sh
-    └── run_segmentation.slurm
+    ├── run_segmentation.slurm
+    ├── prepare_segmentation_array.sh
+    ├── run_segmentation_array.slurm
+    ├── run_segmentation_consolidate.slurm
+    └── submit_segmentation_array.sh
 ```
 
-Set `MAPBIOMAS_ROOT` (default `/home/lserey/mapbiomas_land`) for data paths.
+Set **`MAPBIOMAS_ROOT`** (default `/home/lserey/mapbiomas_land`) for data paths.
 
 ## Year conventions
 
-
-| Item                | Pattern                                                                                        |
-| ------------------- | ---------------------------------------------------------------------------------------------- |
-| Masked mosaic       | `{MAPBIOMAS_ROOT}/tmp/mask_mosaic_{year}/{TILE}/TMP-CHILE-{TILE}-{year}-SBAND-184B_masked.tif` |
-| Segmentation output | `{MAPBIOMAS_ROOT}/prod/segmentacion_slic_rev{rev_year}/`                                       |
-| Rectangle filter    | `rev_year1 == rev_year` in revision-plan GPKG                                                  |
-
+| Item | Pattern |
+|------|---------|
+| Masked mosaic | `{MAPBIOMAS_ROOT}/tmp/mask_mosaic_{year}/{TILE}/TMP-CHILE-{TILE}-{year}-SBAND-184B_masked.tif` |
+| Segmentation output | `{MAPBIOMAS_ROOT}/prod/segmentacion_slic_rev{rev_year}/` |
+| Rectangle filter | `rev_year1 == rev_year` in revision-plan GPKG |
 
 For another year, build `mask_mosaic_{year}` and run with `--rev-year` and `--year`
 (usually the same).
-
-## 2015 inventory (current)
-
-
-| Item                                | Count |
-| ----------------------------------- | ----- |
-| Rectangles `rev_year1=2015`         | 57    |
-| With masked mosaic                  | 53    |
-| Missing mosaic (tiles 19FCB, 19FCC) | 4     |
-| Already segmented (pilot)           | 1     |
-| Pending                             | 52    |
-
-
-
 
 ## Plan only
 
@@ -61,16 +51,12 @@ python plan_segmentation.py --rev-year 2015
 python plan_segmentation.py --rev-year 2015 --require-mosaic --skip-existing
 ```
 
-
-
 ## Pilot (one tile or rectangle)
 
 ```bash
 python run_slic_segmentation.py --test-tile 18GXA
 python run_slic_segmentation.py --grid-id 18GXA_3x3_c003_r003
 ```
-
-
 
 ## Production 2015
 
@@ -79,29 +65,16 @@ python run_slic_segmentation.py --grid-id 18GXA_3x3_c003_r003
 python run_slic_segmentation.py \
   --rev-year 2015 --require-mosaic --skip-existing --dry-run
 
-# Full run
+# Full run (sequential)
 REV_YEAR=2015 SKIP_EXISTING=1 ./jobs/run_segmentation.sh
-
-# SLURM (sequential)
-sbatch --export=REV_YEAR=2015 jobs/run_segmentation.slurm
 ```
-
-
 
 ## SLURM array (parallel, recommended)
 
-One rectangle per array task (~52 jobs for 2015):
+One rectangle per array task:
 
 ```bash
 REV_YEAR=2015 ARRAY_THROTTLE=16 ./jobs/submit_segmentation_array.sh
-```
-
-Or manually:
-
-```bash
-REV_YEAR=2015 ./jobs/prepare_segmentation_array.sh
-sbatch --array=0-51%16 --export=ALL,REV_YEAR=2015 jobs/run_segmentation_array.slurm
-sbatch --dependency=afterok:JOBID --export=ALL,REV_YEAR=2015 jobs/run_segmentation_consolidate.slurm
 ```
 
 Default resources on `main`: 4 CPUs, 8G RAM, 1h30 per task, throttle `%16`.
@@ -119,37 +92,18 @@ Run level:
 - `plan_rev{year}.json` — rectangle / mosaic / status inventory
 - `run_summary_rev{year}.json` — results and errors
 
-
-
 ## SLIC parameters
 
-
-| Parameter        | Value                           |
-| ---------------- | ------------------------------- |
-| scale            | 50                              |
-| sigma            | 0.1                             |
-| compactness      | 10                              |
-| perimeter buffer | 100 px                          |
-| RAG              | p10                             |
-| n_segments       | max(2, n_valid_pixels // scale) |
-
+| Parameter | Value |
+|-----------|-------|
+| scale | 50 |
+| sigma | 0.1 |
+| compactness | 10 |
+| perimeter buffer | 100 px |
+| RAG | p10 |
+| n_segments | max(2, n_valid_pixels // scale) |
 
 Band indices: `config/bands_184b.py`.
-
-## Useful flags
-
-
-| Flag               | Effect                                       |
-| ------------------ | -------------------------------------------- |
-| `--require-mosaic` | Skip rectangles without masked mosaic        |
-| `--skip-existing`  | Skip rectangles with existing `summary.json` |
-| `--force`          | Reprocess even if output exists              |
-| `--dry-run`        | Plan only                                    |
-| `--limit N`        | Process at most N rectangles                 |
-| `--year`           | Mosaic year (default = `--rev-year`)         |
-
-
-
 
 ## Spectral signature viewer
 
@@ -161,14 +115,9 @@ python3 -m http.server 8765
 # → http://localhost:8765/viewer/segment_signatures_viewer.html
 ```
 
-
-
 ## Inputs (reference)
 
-
-| Resource           | Path                                                             |
-| ------------------ | ---------------------------------------------------------------- |
+| Resource | Path |
+|----------|------|
 | Selection UTM18/19 | `config/run_refs.py` → `seleccion_con_rev_years_utm{18,19}.gpkg` |
-| 2015 mosaics       | `{MAPBIOMAS_ROOT}/tmp/mask_mosaic_2015/{TILE}/`                  |
-
-
+| 2015 mosaics | `{MAPBIOMAS_ROOT}/tmp/mask_mosaic_2015/{TILE}/` |

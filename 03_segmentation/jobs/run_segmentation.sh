@@ -17,7 +17,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
 
 PYTHON="${PYTHON:-python3}"
-MAPBIOMAS_ROOT="${MAPBIOMAS_ROOT:-/home/lserey/mapbiomas_land}"
+MAPBIOMAS_ROOT="${MAPBIOMAS_ROOT:?Defina MAPBIOMAS_ROOT (ver env.example)}"
 REV_YEAR="${REV_YEAR:-2015}"
 YEAR="${YEAR:-${REV_YEAR}}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
