@@ -1,4 +1,4 @@
-"""Alineación de landcover C2 al grid del raster de segmentos."""
+"""Align C2 landcover to the segment raster grid."""
 
 from __future__ import annotations
 
@@ -10,16 +10,7 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject
 
 
-def leer_landcover_alineado(
-    landcover_path: Path,
-    ref_profile: dict,
-) -> np.ndarray:
-    """
-    Reproyecta classification_{year}.tif al CRS/transform del raster de segmentos.
-
-    Returns:
-        array int32 (H, W) alineado pixel a pixel con labels.tif
-    """
+def read_aligned_landcover(landcover_path: Path, ref_profile: dict) -> np.ndarray:
     height = ref_profile["height"]
     width = ref_profile["width"]
     dest = np.zeros((height, width), dtype=np.int32)
@@ -37,3 +28,6 @@ def leer_landcover_alineado(
             dst_nodata=0,
         )
     return dest
+
+
+leer_landcover_alineado = read_aligned_landcover

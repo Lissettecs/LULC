@@ -1,21 +1,11 @@
-"""MapBiomas Collection 2 — clases nodata, tier protegido y nombres."""
+"""MapBiomas Collection 2 — nodata values, protected tier, and class names."""
 
 from __future__ import annotations
 
-# Píxeles excluidos del cómputo de pureza / moda
 C2_NODATA: frozenset[int] = frozenset({0, 27})
 
-# Tier protegido: si aparece ≥1 píxel en el segmento → tiene_protegida=True
-# (aunque no sea la moda). Referencia: seg-labeling exp_buffer + ssl4eo CLASES_PROTEGIDAS
 CLASES_TIER_PROTEGIDO: frozenset[int] = frozenset({
-    3,   # Bosque / tamarugo
-    11,  # Humedal
-    23,  # Arena, playa y duna
-    24,  # Zona urbana / mosaico agro-forestal
-    33,  # Río, lago u océano
-    34,  # Glaciar / nieve y hielo
-    61,  # Salar
-    67,  # Bosque achaparrado
+    3, 11, 23, 24, 33, 34, 61, 67,
 })
 
 CLASS_NAMES: dict[int, str] = {
@@ -43,7 +33,10 @@ CLASS_NAMES: dict[int, str] = {
 }
 
 
-def nombre_clase(clase_id: int) -> str:
+def class_name(clase_id: int) -> str:
     if clase_id == 0:
         return ""
-    return CLASS_NAMES.get(int(clase_id), f"clase_{int(clase_id)}")
+    return CLASS_NAMES.get(int(clase_id), f"class_{int(clase_id)}")
+
+
+nombre_clase = class_name

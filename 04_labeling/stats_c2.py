@@ -1,4 +1,4 @@
-"""Estadísticas de etiquetado C2 por segmento."""
+"""C2 labeling statistics per segment."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from config.clases_c2 import CLASES_TIER_PROTEGIDO, C2_NODATA, nombre_clase
+from config.clases_c2 import CLASES_TIER_PROTEGIDO, C2_NODATA, class_name
 
 
 @dataclass(frozen=True)
@@ -23,36 +23,27 @@ class LabelStats:
     tiene_protegida: np.ndarray
 
 
-def _distribucion_top3(p1: float, p2: float, n_valid: int, count1: int, count2: int) -> str:
-    """Formato '95/2/1' sobre píxeles C2 válidos."""
+def _top3_distribution(p1: float, p2: float, n_valid: int, count1: int, count2: int) -> str:
     if n_valid <= 0:
         return "0/0/0"
-    resto = max(0, n_valid - count1 - count2)
-    p3 = 100.0 * resto / n_valid
+    rest = max(0, n_valid - count1 - count2)
+    p3 = 100.0 * rest / n_valid
     return f"{p1:.0f}/{p2:.0f}/{p3:.0f}"
 
 
-def calcular_stats_c2(
+def compute_c2_stats(
     segments: np.ndarray,
     c2: np.ndarray,
     c2_nodata: frozenset[int] = C2_NODATA,
-    clases_protegidas: frozenset[int] = CLASES_TIER_PROTEGIDO,
+    protected_classes: frozenset[int] = CLASES_TIER_PROTEGIDO,
     background_id: int = 0,
 ) -> LabelStats:
-    """
-    Por cada segment_id:
-      - clase_moda, pureza (%)
-      - clase_2, pureza_2 (%)
-      - n_clases (clases C2 válidas distintas)
-      - area_px (píxeles del segmento, incl. nodata C2)
-      - tiene_protegida
-    """
     seg = segments.ravel().astype(np.int64, copy=False)
     lc = c2.ravel().astype(np.int64, copy=False)
 
     foreground = seg != background_id
     if not foreground.any():
-        raise ValueError("Sin segmentos en el raster (todo background).")
+        raise ValueError("No segments in raster (all background).")
 
     seg_fg = seg[foreground]
     segment_ids = np.unique(seg_fg)
@@ -63,7 +54,7 @@ def calcular_stats_c2(
 
     valid_lc = foreground & ~np.isin(lc, list(c2_nodata))
     if not valid_lc.any():
-        raise ValueError("Sin píxeles C2 válidos bajo segmentos.")
+        raise ValueError("No valid C2 pixels under segments.")
 
     seg_v = seg[valid_lc]
     lc_v = lc[valid_lc]
@@ -84,7 +75,6 @@ def calcular_stats_c2(
     with np.errstate(divide="ignore", invalid="ignore"):
         pureza = np.where(n_valid > 0, 100.0 * count_moda / n_valid, 0.0)
 
-    # Segunda clase
     counts_copy = counts.copy()
     counts_copy[np.arange(k), best_j] = -1
     second_j = np.argmax(counts_copy, axis=1)
@@ -97,7 +87,7 @@ def calcular_stats_c2(
 
     n_clases = (counts > 0).sum(axis=1).astype(np.int64)
 
-    prot_cols = [j for j, cls in enumerate(classes) if int(cls) in clases_protegidas]
+    prot_cols = [j for j, cls in enumerate(classes) if int(cls) in protected_classes]
     if prot_cols:
         tiene_protegida = counts[:, prot_cols].sum(axis=1) > 0
     else:
@@ -116,7 +106,11 @@ def calcular_stats_c2(
     )
 
 
-def stats_a_dataframe(stats: LabelStats) -> pd.DataFrame:
+# Backward-compatible aliases
+calcular_stats_c2 = compute_c2_stats
+
+
+def stats_to_dataframe(stats: LabelStats) -> pd.DataFrame:
     rows = []
     for i in range(stats.segment_ids.size):
         sid = int(stats.segment_ids[i])
@@ -133,14 +127,17 @@ def stats_a_dataframe(stats: LabelStats) -> pd.DataFrame:
                 "area_px": int(stats.area_px[i]),
                 "n_valid_c2": nv,
                 "clase_moda": c1,
-                "clase_moda_nombre": nombre_clase(c1),
+                "clase_moda_nombre": class_name(c1),
                 "pureza": round(p1, 2),
                 "clase_2": c2,
-                "clase_2_nombre": nombre_clase(c2) if c2 else "",
+                "clase_2_nombre": class_name(c2) if c2 else "",
                 "pureza_2": round(p2, 2),
                 "n_clases": int(stats.n_clases[i]),
                 "tiene_protegida": bool(stats.tiene_protegida[i]),
-                "distribucion_top3": _distribucion_top3(p1, p2, nv, cnt1, cnt2),
+                "distribucion_top3": _top3_distribution(p1, p2, nv, cnt1, cnt2),
             }
         )
     return pd.DataFrame(rows).sort_values("segment_id").reset_index(drop=True)
+
+
+stats_a_dataframe = stats_to_dataframe
