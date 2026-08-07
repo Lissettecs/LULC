@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+.pytest_cache/
+
+# Corridas locales / cluster (salida real en prod/samples_v02)
+logs/
+diagnostico/diagnostico_*.md
+*.out
+*.err
+.ultima_corrida*
+.tiles.txt
+tiles*.txt
+
+# Datos pesados
+*.parquet
+*.gpkg
+*.geopjson
+.DS_Store

@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Salidas (van a prod/samples_cim)
+*.gpkg
+*.parquet
+*.csv
+logs/
+*.out
+*.err
+.ultima_corrida_caract
