@@ -144,21 +144,27 @@ def asignar_metadatos_anuales(
 def cuota_segmentos_a_rectangulos(
     cuota_seg: float,
     *,
+    celda_px: int | None = None,
     area_km2: float | None = None,
     rendimiento: float = 0.26,
 ) -> int:
     """Convierte cuota de segmentos en número objetivo de rectángulos."""
     if cuota_seg <= 0:
         return 0
-    area = float(area_km2 if area_km2 is not None else P.AREA_KM2_CUOTA)
-    area_ha = area * 100.0
-    seg_por_rect = area_ha * P.SEGMENTOS_POR_1000HA / 1000.0 * rendimiento
+    seg_por_rect = P.segmentos_por_rectangulo(
+        celda_px=celda_px, area_km2=area_km2, rendimiento=rendimiento
+    )
     if seg_por_rect <= 0:
         return 0
     return max(1, int(round(cuota_seg / seg_por_rect)))
 
 
 def estimar_segmentos_rect(row: pd.Series, rendimiento: float = 0.26) -> float:
-    area_ha = float(row.get("area_km2", P.AREA_KM2_CUOTA) or P.AREA_KM2_CUOTA) * 100.0
+    """Segmentos estimados que rinde un rectángulo (oferta, con pureza de moda)."""
     mode_pct = float(row.get("lulc_mode_pct", 100) or 100) / 100.0
-    return area_ha * P.SEGMENTOS_POR_1000HA / 1000.0 * mode_pct * rendimiento
+    if P.BASE_CUOTA == "pixeles":
+        raw = row.get("celda_px", P.CELDA_PX_CUOTA)
+        celda_px = int(raw if raw is not None else P.CELDA_PX_CUOTA)
+        return P.segmentos_por_rectangulo(celda_px=celda_px, rendimiento=rendimiento) * mode_pct
+    area_km2 = float(row.get("area_km2", P.AREA_KM2_CUOTA) or P.AREA_KM2_CUOTA)
+    return P.segmentos_por_rectangulo(area_km2=area_km2, rendimiento=rendimiento) * mode_pct

@@ -62,21 +62,32 @@ def repartir_presupuesto(matriz: pd.DataFrame, logger: logging.Logger) -> pd.Dat
         refuerzo_clases = [c for c, v in u.items() if v["modo"] == "refuerzo"]
         censo_clases = [c for c, v in u.items() if v["modo"] == "censo"]
         # Cuota censo: techo de segmentos (la cobertura ha se aplica en el selector)
-        cuota_censo = sum(u[c]["area_ha"] * P.SEGMENTOS_POR_1000HA / 1000 for c in censo_clases)
+        cuota_censo = sum(P.segmentos_desde_area_ha(u[c]["area_ha"]) for c in censo_clases)
         # Refuerzo: piso mínimo de segmentos; cobertura objetivo se cierra en selector
         cuota_ref_min = len(refuerzo_clases) * 50 if refuerzo_clases else 0
         remanente = max(0, pres_eco - cuota_censo - cuota_ref_min)
 
-        estandar_area = sum(u[c]["area_ha"] for c, v in u.items() if v["modo"] in ("estandar", "techo"))
+        # Peso del remanente: √píxeles en ruta "pixeles", √ha en ruta "superficie"
+        # (a PIXEL_M=30 son proporcionales → mismo reparto relativo).
+        def _peso(area_ha: float) -> float:
+            if P.BASE_CUOTA == "pixeles":
+                return P.pixeles_nominales_desde_ha(area_ha)
+            return float(area_ha)
+
+        estandar_peso = sum(
+            _peso(u[c]["area_ha"]) for c, v in u.items() if v["modo"] in ("estandar", "techo")
+        )
         for cid, info in u.items():
             if info["modo"] == "censo":
-                cuota = u[cid]["area_ha"] * P.SEGMENTOS_POR_1000HA / 1000
+                cuota = P.segmentos_desde_area_ha(u[cid]["area_ha"])
             elif info["modo"] == "refuerzo":
                 cuota = 50
             elif info["modo"] == "techo":
-                cuota = remanente * 0.15 if estandar_area > 0 else 0
+                cuota = remanente * 0.15 if estandar_peso > 0 else 0
             else:
-                cuota = remanente * math.sqrt(info["area_ha"]) / math.sqrt(estandar_area or 1)
+                cuota = remanente * math.sqrt(_peso(info["area_ha"])) / math.sqrt(
+                    estandar_peso or 1
+                )
             filas.append(
                 {
                     "ecorregion_id": eco_id,

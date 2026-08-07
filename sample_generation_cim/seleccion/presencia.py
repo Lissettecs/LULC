@@ -77,7 +77,7 @@ def _asignar_modo(
 ) -> str:
     if (eco_id, cid) in P.EXCEPCIONES_MODO:
         return P.EXCEPCIONES_MODO[(eco_id, cid)]
-    seg_est = area_ha * P.SEGMENTOS_POR_1000HA / 1000.0
+    seg_est = P.segmentos_desde_area_ha(area_ha)
     if seg_est <= P.UMBRAL_CENSO_SEGMENTOS:
         return "censo"
     if pct_eco < P.UMBRAL_RAREZA_PCT_ECO:

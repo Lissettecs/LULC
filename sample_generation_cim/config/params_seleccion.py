@@ -26,10 +26,9 @@ ECO_AGRUPADAS = {}
 ORDEN_TAMANOS = [3, 2]
 RELLENO_ORDEN_TAMANOS = [3, 2]
 
-# Área nominal para convertir cuota de segmentos → rectángulos. En v02 eran
-# ~240 km² fijos (UTM). Aquí la celda 2x2 promedia 190,5 km² (la de cobertura
-# medible); usamos ese valor porque FASE 0 y la auditoría de cobertura trabajan
-# sobre la grilla 2x2.
+# Área nominal para convertir cuota de segmentos → rectángulos (ruta
+# BASE_CUOTA="superficie"). En v02 eran ~240 km² fijos (UTM). Aquí la celda
+# 2x2 promedia 190,5 km²; queda disponible para comparación / regresión.
 AREA_KM2_CUOTA = 190.5
 
 # CRS métrico usado solo para tracking de solape y verificación de área.
@@ -37,6 +36,18 @@ AREA_KM2_CUOTA = 190.5
 # el error de distorsión en la zona 18 no afecta la exclusión exclusiva.
 CRS_PROCESO = "EPSG:32719"
 CRS_SALIDA = "EPSG:4326"
+
+# --- Base de cuota de segmentos ----------------------------------------------
+# En grilla geográfica (CIM, EPSG:4326) el invariante es el conteo de píxeles,
+# no la superficie de suelo (que cae con la latitud). En grilla métrica (UTM)
+# ambas son equivalentes; BASE_CUOTA="superficie" reproduce v02.
+#
+# "pixeles"  → seg = n_px * SEG_POR_MPX / 1e6  (ruta activa en CIM)
+# "superficie" → seg = area_ha * SEGMENTOS_POR_1000HA / 1000
+BASE_CUOTA = "pixeles"  # "pixeles" | "superficie"
+PIXEL_M = 30  # m; píxel nominal del landcover (igual que v02)
+# Celda de referencia para cuota→rects sin fila (análoga a AREA_KM2_CUOTA ≈ 2x2).
+CELDA_PX_CUOTA = 528  # 2x2; 792 = 3x3
 
 UMBRAL_RAREZA_PCT_ECO = 1.0
 UMBRAL_PRESENCIA_HA = 500
@@ -53,7 +64,60 @@ EXCEPCIONES_MODO = {
 
 PRESUPUESTO_SEGMENTOS_TOTAL = 100_000
 SEGMENTOS_POR_1000HA = 50
+# Densidad en píxeles, derivada de SEGMENTOS_POR_1000HA vía píxel nominal 30 m
+# (sin re-tunear). Con PIXEL_M=30 y SEGMENTOS_POR_1000HA=50 → 4500.
+_PIXELLES_POR_1000HA = 1000.0 * 1e4 / (PIXEL_M ** 2)
+SEG_POR_MPX = SEGMENTOS_POR_1000HA * 1e6 / _PIXELLES_POR_1000HA
 RENDIMIENTO_SEG_OK = {"homogenea": 0.35, "intermedia": 0.26, "heterogenea": 0.12}
+
+
+def _verificar_equivalencia_seg_por_mpx() -> None:
+    """SEG_POR_MPX debe reproducir la fórmula por superficie a PIXEL_M m."""
+    for celda_px in (528, 792):
+        n_px = celda_px * celda_px
+        area_km2 = n_px * (PIXEL_M ** 2) / 1e6
+        seg_px = n_px * SEG_POR_MPX / 1e6
+        seg_sup = area_km2 * 100.0 * SEGMENTOS_POR_1000HA / 1000.0
+        if abs(seg_px - seg_sup) > 1e-6:
+            raise AssertionError(
+                f"Equivalencia SEG_POR_MPX rota en {celda_px}px: "
+                f"pixeles={seg_px} vs superficie={seg_sup}"
+            )
+
+
+_verificar_equivalencia_seg_por_mpx()
+
+
+def pixeles_nominales_desde_ha(area_ha: float) -> float:
+    """Convierte hectáreas a píxeles nominales de PIXEL_M × PIXEL_M."""
+    return float(area_ha) * 1e4 / (PIXEL_M ** 2)
+
+
+def segmentos_desde_pixeles(n_pixeles: float) -> float:
+    return float(n_pixeles) * SEG_POR_MPX / 1e6
+
+
+def segmentos_desde_area_ha(area_ha: float) -> float:
+    """Cuota de segmentos (demanda) según BASE_CUOTA."""
+    if BASE_CUOTA == "pixeles":
+        return segmentos_desde_pixeles(pixeles_nominales_desde_ha(area_ha))
+    return float(area_ha) * SEGMENTOS_POR_1000HA / 1000.0
+
+
+def segmentos_por_rectangulo(
+    *,
+    celda_px: int | None = None,
+    area_km2: float | None = None,
+    rendimiento: float = 0.26,
+) -> float:
+    """Segmentos esperados por rectángulo (oferta) según BASE_CUOTA."""
+    if BASE_CUOTA == "pixeles":
+        px = int(celda_px if celda_px is not None else CELDA_PX_CUOTA)
+        return (px * px) * SEG_POR_MPX / 1e6 * float(rendimiento)
+    area = float(area_km2 if area_km2 is not None else AREA_KM2_CUOTA)
+    return area * 100.0 * SEGMENTOS_POR_1000HA / 1000.0 * float(rendimiento)
+
+
 PESO_AREA_GENERAL = 0.40
 PESO_N_CLASES = 0.35
 PESO_N_RARAS = 0.25
