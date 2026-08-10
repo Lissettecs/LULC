@@ -40,6 +40,12 @@ Prueba ciega de calibración de revisores sobre segmentos 100% puros (Collection
 
 Documentación en [sample_review_calibration/README.md](sample_review_calibration/README.md).
 
+### [webapp_rgb/](webapp_rgb/)
+
+GeoTIFF RGB (true color) y falso color (`swir1`/`nir`/`red`) por rectángulo de etiquetado CIM, con pirámides internas para la webapp.
+
+Documentación en [webapp_rgb/README.md](webapp_rgb/README.md). Salidas en `mapbiomas_land/prod/webapp/rgb/`.
+
 ## Datos generados
 
 No versionar datos pesados ni intermedios (rasters, shapefiles, GeoJSON, GeoPackage, ZIP, CSV de salida, etc.). Los productos se regeneran con los scripts o se almacenan fuera de Git.
