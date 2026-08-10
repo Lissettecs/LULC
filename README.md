@@ -34,6 +34,12 @@ Calibración visual de segmentación Felzenszwalb sobre mosaicos NIR/SWIR1/red: 
 
 Documentación en [segmentacion_etiquetas/README.md](segmentacion_etiquetas/README.md).
 
+### [sample_review_calibration/](sample_review_calibration/) (English)
+
+Prueba ciega de calibración de revisores sobre segmentos 100% puros (Collection 2). Propone cuotas, selecciona muestra no contigua estratificada por ecorregión y puntúa contra la clave confirmada por la supervisora.
+
+Documentación en [sample_review_calibration/README.md](sample_review_calibration/README.md).
+
 ## Datos generados
 
 No versionar datos pesados ni intermedios (rasters, shapefiles, GeoJSON, GeoPackage, ZIP, CSV de salida, etc.). Los productos se regeneran con los scripts o se almacenan fuera de Git.
