@@ -2,6 +2,8 @@
 """Fase 2 — Selección de muestra no contigua + paquetes supervisora/revisores.
 
 NO construye la clave definitiva (eso es Fase 3). Genera:
+  - selected_segments.gpkg (muestra con clase C2 propuesta)
+  - calibration_segments.gpkg (mismos segmentos + supervisor/annotator class + names)
   - supervisor_review.gpkg (trabajo de la supervisora)
   - calibration_review_blind.* (base ciega)
   - per_reviewer/review_<revisor>.gpkg (ciego, orden distinto por revisor)
@@ -21,7 +23,7 @@ DIR_RESULTADOS = "/home/lserey/mapbiomas_land/prod/sample_review_calibration"
 # Ruta a proposed_quotas.csv (o copia aprobada). AJUSTAR tras Fase 1.
 QUOTAS_CSV = (
     "/home/lserey/mapbiomas_land/prod/sample_review_calibration/"
-    "20260810_161113/analysis/proposed_quotas.csv"
+    "20260814_132309/analysis/proposed_quotas.csv"
 )
 
 SEED = 2026
@@ -47,7 +49,7 @@ BORDE_MIN_M = BORDE_MIN_PX * PIXEL_M
 ESTRATIFICACION_ECO = "par_igual"
 ECO_STRATA_CSV = (
     "/home/lserey/mapbiomas_land/prod/sample_review_calibration/"
-    "20260810_161113/analysis/proposed_eco_strata.csv"
+    "20260814_132309/analysis/proposed_eco_strata.csv"
 )
 # ═══════════════════════════════════════════════════════════════
 
@@ -241,6 +243,21 @@ def _columnas_ubicacion(sel: gpd.GeoDataFrame) -> list[str]:
     return cols
 
 
+def construir_calibration_segments(selected: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Mismos segmentos/columnas que selected_segments + clases para matriz de confusión.
+
+    `supervisor_class` / `annotator_class` y sus nombres salen vacíos:
+    se llenan en la revisión humana.
+    """
+    geom = selected.geometry.name
+    df = selected.copy()
+    df["supervisor_class"] = pd.Series([pd.NA] * len(df), dtype="Int64")
+    df["supervisor_class_name"] = ""
+    df["annotator_class"] = pd.Series([pd.NA] * len(df), dtype="Int64")
+    df["annotator_class_name"] = ""
+    return gpd.GeoDataFrame(df, geometry=geom, crs=selected.crs)
+
+
 def construir_supervisor(sel: gpd.GeoDataFrame, mode: str, order: str, seed: int) -> gpd.GeoDataFrame:
     mode = mode.lower().strip()
     order = order.lower().strip()
@@ -340,9 +357,12 @@ def escribir_readme_run(
         "## Execution order",
         "",
         "1. Phase 1 → approve quotas (`proposed_quotas.csv`)",
-        "2. Phase 2 → generates `supervisor_review` + blind reviewer files",
-        "3a. Supervisor fills `supervisor_review` (confirmed class)",
-        "3b. Reviewers fill `reviewer_class` in their files (parallel, blind)",
+        "2. Phase 2 → generates `selected_segments`, `calibration_segments`,",
+        "   `supervisor_review` and blind reviewer files",
+        "3a. Fill `supervisor_class` / `supervisor_class_name` and",
+        "    `annotator_class` / `annotator_class_name` in `calibration_segments`",
+        "    (single file for the confusion matrix), or use the split packages:",
+        "    supervisor → `supervisor_review`; reviewers → `reviewer_class` (blind)",
         "4. Phase 3 → scores reviewers against the confirmed key",
         "",
     ]
@@ -479,11 +499,16 @@ def main() -> None:
             "proportion_pct": "proportion",
         }
     )
+    selected = gpd.GeoDataFrame(selected, geometry=geom, crs=sel.crs)
     selected_path = out_dir / "selected_segments.gpkg"
-    gpd.GeoDataFrame(selected, geometry=geom, crs=sel.crs).to_file(
-        selected_path, driver="GPKG"
-    )
+    selected.to_file(selected_path, driver="GPKG")
     print(f"Escrito: {selected_path}")
+
+    # A2) paquete unificado (mismos segmentos + columnas para matriz de confusión)
+    calib = construir_calibration_segments(selected)
+    calib_path = out_dir / "calibration_segments.gpkg"
+    calib.to_file(calib_path, driver="GPKG")
+    print(f"Escrito: {calib_path}")
 
     # B) supervisor
     sup = construir_supervisor(sel, SUPERVISOR_MODE, SUPERVISOR_ORDER, SEED)

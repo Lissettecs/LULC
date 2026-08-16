@@ -75,6 +75,8 @@ Outputs under `<run>/analysis/`:
 
 Outputs under `<run>/sample/`:
 
+- `selected_segments.gpkg` — selected sample with proposed C2 class
+- `calibration_segments.gpkg` — same segments plus empty `supervisor_class`, `supervisor_class_name`, `annotator_class` and `annotator_class_name` (single file for the confusion matrix)
 - `supervisor_review.gpkg` — supervisor work file (not blind in `confirmar` mode)
 - `calibration_review_blind.gpkg` / `.csv` — blind baseline
 - `per_reviewer/review_<revisor>.gpkg` — one blind copy per reviewer
@@ -84,6 +86,7 @@ Outputs under `<run>/sample/`:
 
 | Role | File | Action |
 |------|------|--------|
+| Supervisor + annotator | `calibration_segments.gpkg` | Fill `supervisor_class` / `supervisor_class_name` and `annotator_class` / `annotator_class_name` (one file for the confusion matrix) |
 | Supervisor | `supervisor_review.gpkg` | Fill/confirm `supervisor_class`, mark `supervisor_confirmed` |
 | Reviewers | `per_reviewer/review_*.gpkg` | Fill `reviewer_class` (blind) |
 
