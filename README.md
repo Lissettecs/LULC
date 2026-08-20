@@ -16,6 +16,12 @@ Segmentación SLIC + RAG sobre rectángulos del plan de revisión (mosaicos CIM 
 
 Documentación en [03_segmentation/README.md](03_segmentation/README.md). Sincronizado con `seglabel-pipeline/03_segmentation`.
 
+### [04_labeling/](04_labeling/)
+
+Etiquetado de segmentos SLIC+RAG con estadísticas de MapBiomas Collection 2 (CIM).
+
+Documentación en [04_labeling/README.md](04_labeling/README.md). Sincronizado con `seglabel-pipeline/04_labeling`.
+
 ### [generacion-mosaicos/](generacion-mosaicos/)
 
 Contiene el flujo de generación de mosaicos Landsat por grillas MGRS.

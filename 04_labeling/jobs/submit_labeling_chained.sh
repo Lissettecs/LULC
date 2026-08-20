@@ -13,7 +13,7 @@ YEAR="${YEAR:-${REV_YEAR}}"
 ARRAY_THROTTLE="${ARRAY_THROTTLE:-16}"
 MAPBIOMAS_ROOT="${MAPBIOMAS_ROOT:?Set MAPBIOMAS_ROOT}"
 
-LABEL_DIR="${LABEL_DIR:-${MAPBIOMAS_ROOT}/prod/labeling_slic_rev${YEAR}}"
+LABEL_DIR="${LABEL_DIR:-${MAPBIOMAS_ROOT}/prod/04_labeling_cim/${YEAR}}"
 LOG_DIR="${LOG_DIR:-${LABEL_DIR}/logs}"
 LIST="${LOG_DIR}/pending_labeling_rev${YEAR}.lst"
 
