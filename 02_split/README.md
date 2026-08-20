@@ -1,4 +1,4 @@
-# sample_generation_cim
+# 02_split
 
 Generación de muestras para MapBiomas Chile sobre la grilla **CIM 1:250.000**, la
 misma grilla de cartas con la que se producen los mosaicos Landsat

@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-REPO="/home/lserey/repositorio/coverage/sample_generation_cim"
+REPO="/home/lserey/repositorio/coverage/02_split"
 PYTHON="${PYTHON:-/home/lserey/.conda/envs/mb_coverage/bin/python}"
 cd "${REPO}"
 mkdir -p logs
