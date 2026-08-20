@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Build an interactive HTML viewer for SLIC+RAG segments.
+Genera un visor HTML interactivo de segmentos SLIC+RAG.
 
-Click a segment (map or ID search) to inspect:
-  - Mean spectral signature per band (blue … swir2)
-  - Spatial standard deviation per band (error bars)
-  - Aggregated variacion_espectral
+Al hacer clic (mapa o búsqueda por ID) se inspeccionan:
+  - Firma espectral media por banda (blue … swir2)
+  - Desviación estándar espacial por banda (barras de error)
+  - spectral_variation agregada
 
-Usage:
+Uso:
   python build_spectral_viewer.py
   python build_spectral_viewer.py --grid-id 18GXA_3x3_c003_r003
 """
@@ -49,11 +49,13 @@ BAND_COLORS = {
 }
 
 
-def public_path(html_dir: Path, archivo: Path) -> str:
+def ruta_publica(html_dir: Path, archivo: Path) -> str:
+    """Ruta relativa del asset respecto al HTML."""
     return os.path.relpath(archivo.resolve(), html_dir.resolve()).replace("\\", "/")
 
 
-def discover_rectangles(seg_root: Path, grid_id: str | None) -> list[dict]:
+def descubrir_rectangulos(seg_root: Path, grid_id: str | None) -> list[dict]:
+    """Inventario de rectángulos con summary + GPKG + labels disponibles."""
     rects: list[dict] = []
     for summary_path in sorted(seg_root.glob("*/*/*_summary.json")):
         data = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -63,7 +65,12 @@ def discover_rectangles(seg_root: Path, grid_id: str | None) -> list[dict]:
         gpkg = summary_path.parent / f"{gid}_slic_ragp10_segments.gpkg"
         labels = Path(data["label_raster"])
         if not gpkg.is_file() or not labels.is_file():
-            continue
+            # Fallback al nombre con year del summary
+            alt = summary_path.parent / f"{gid}_{data.get('rev_year', '')}_segments.gpkg"
+            if alt.is_file() and labels.is_file():
+                gpkg = alt
+            else:
+                continue
         rects.append(
             {
                 "grid_id": gid,
@@ -77,15 +84,16 @@ def discover_rectangles(seg_root: Path, grid_id: str | None) -> list[dict]:
             }
         )
     if not rects:
-        raise FileNotFoundError(f"No rectangles with complete outputs in {seg_root}")
+        raise FileNotFoundError(f"No hay rectángulos con salidas completas en {seg_root}")
     return rects
 
 
-def _quicklook_scale(h: int, w: int, max_side: int) -> float:
+def _escala_quicklook(h: int, w: int, max_side: int) -> float:
     return min(1.0, max_side / max(h, w))
 
 
-def _normalize_rgb(bandas: np.ndarray, validos: np.ndarray) -> np.ndarray:
+def _normalizar_rgb(bandas: np.ndarray, validos: np.ndarray) -> np.ndarray:
+    """Estira RGB al percentil 2–98 de píxeles válidos."""
     rgb = np.zeros((*bandas.shape[:2], 3), dtype=np.float32)
     for c in range(3):
         canal = bandas[..., c].astype(np.float32)
@@ -101,7 +109,8 @@ def _normalize_rgb(bandas: np.ndarray, validos: np.ndarray) -> np.ndarray:
     return rgb
 
 
-def _boundaries_rgba(labels: np.ndarray, validos: np.ndarray) -> np.ndarray:
+def _contornos_rgba(labels: np.ndarray, validos: np.ndarray) -> np.ndarray:
+    """Máscara RGBA de bordes entre segmentos."""
     h, w = labels.shape
     borde = np.zeros((h, w), dtype=bool)
     borde[1:, :] |= labels[1:, :] != labels[:-1, :]
@@ -114,7 +123,8 @@ def _boundaries_rgba(labels: np.ndarray, validos: np.ndarray) -> np.ndarray:
     return rgba
 
 
-def _encode_pick_ids(labels: np.ndarray) -> np.ndarray:
+def _codificar_ids_pick(labels: np.ndarray) -> np.ndarray:
+    """Codifica segment_id en RGB para picking en el canvas."""
     ids = labels.astype(np.uint32)
     rgb = np.zeros((*labels.shape, 3), dtype=np.uint8)
     rgb[..., 0] = ids & 0xFF
@@ -123,11 +133,12 @@ def _encode_pick_ids(labels: np.ndarray) -> np.ndarray:
     return rgb
 
 
-def export_rectangle_layers(
+def exportar_capas_rectangulo(
     rect: dict,
     assets_dir: Path,
     max_side: int,
 ) -> dict:
+    """Exporta PNG de fondo, pick-map y contornos para un rectángulo."""
     gid = rect["grid_id"]
     assets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -149,10 +160,10 @@ def export_rectangle_layers(
         validos &= labels > 0
 
     if stack.shape[:2] != labels.shape:
-        raise ValueError(f"Shape distinta labels/mosaico para {gid}")
+        raise ValueError(f"Forma distinta labels/mosaico para {gid}")
 
     rgb = _normalizar_rgb(stack, validos)
-    escala = _escala_para_quicklook(*labels.shape, max_side)
+    escala = _escala_quicklook(*labels.shape, max_side)
     if escala < 1.0:
         from skimage.transform import resize
 
@@ -169,7 +180,7 @@ def export_rectangle_layers(
     bounds_name = f"{gid}_boundaries.png"
 
     Image.fromarray((np.clip(rgb_q, 0, 1) * 255).astype(np.uint8), mode="RGB").save(assets_dir / base_name)
-    Image.fromarray(_encode_pick_ids(labels_q), mode="RGB").save(assets_dir / pick_name)
+    Image.fromarray(_codificar_ids_pick(labels_q), mode="RGB").save(assets_dir / pick_name)
     Image.fromarray(_contornos_rgba(labels_q, validos_q), mode="RGBA").save(assets_dir / bounds_name)
 
     return {
@@ -186,18 +197,19 @@ def export_rectangle_layers(
     }
 
 
-def load_segments(gpkg_path: Path) -> list[dict]:
+def cargar_segmentos(gpkg_path: Path) -> list[dict]:
+    """Lee firmas desde segments.gpkg (columnas de contrato en inglés)."""
     gdf = gpd.read_file(gpkg_path)
     filas: list[dict] = []
     for _, row in gdf.iterrows():
-        means = [float(row[f"mean_{b}"]) for b in BAND_LABELS]
-        stds = [float(row[f"std_{b}"]) for b in BAND_LABELS]
+        means = [float(row[f"{b}_mean"]) for b in BAND_LABELS]
+        stds = [float(row[f"{b}_std"]) for b in BAND_LABELS]
         filas.append(
             {
                 "segment_id": int(row["segment_id"]),
                 "n_pixels": int(row["n_pixels"]),
                 "area_ha": float(row["area_ha"]),
-                "variacion_espectral": float(row["variacion_espectral"]),
+                "spectral_variation": float(row["spectral_variation"]),
                 "means": means,
                 "stds": stds,
             }
@@ -206,35 +218,36 @@ def load_segments(gpkg_path: Path) -> list[dict]:
     return filas
 
 
-def _png_data_uri(path: Path) -> str:
+def _png_a_data_uri(path: Path) -> str:
     b64 = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:image/png;base64,{b64}"
 
 
-def build_html(
+def construir_html(
     rects_meta: list[dict],
-    segments_por_rect: dict[str, list[dict]],
+    segmentos_por_rect: dict[str, list[dict]],
     html_path: Path,
     assets_dir: Path,
     *,
     standalone: bool = False,
 ) -> None:
+    """Ensambla el HTML del visor (UI embebida puede quedar en inglés)."""
     html_dir = html_path.parent
     rects_payload = []
     for r in rects_meta:
         entry = {k: v for k, v in r.items() if not k.endswith("_name")}
         if standalone:
-            entry["base_png"] = _png_data_uri(assets_dir / r["base_png"])
-            entry["pick_png"] = _png_data_uri(assets_dir / r["pick_png"])
-            entry["boundaries_png"] = _png_data_uri(assets_dir / r["boundaries_png"])
+            entry["base_png"] = _png_a_data_uri(assets_dir / r["base_png"])
+            entry["pick_png"] = _png_a_data_uri(assets_dir / r["pick_png"])
+            entry["boundaries_png"] = _png_a_data_uri(assets_dir / r["boundaries_png"])
         else:
-            entry["base_png"] = public_path(html_dir, assets_dir / r["base_png"])
-            entry["pick_png"] = public_path(html_dir, assets_dir / r["pick_png"])
-            entry["boundaries_png"] = public_path(html_dir, assets_dir / r["boundaries_png"])
+            entry["base_png"] = ruta_publica(html_dir, assets_dir / r["base_png"])
+            entry["pick_png"] = ruta_publica(html_dir, assets_dir / r["pick_png"])
+            entry["boundaries_png"] = ruta_publica(html_dir, assets_dir / r["boundaries_png"])
         rects_payload.append(entry)
     payload = {
         "rects": rects_payload,
-        "segments": segments_por_rect,
+        "segments": segmentos_por_rect,
         "bands": BAND_LABELS,
         "band_colors": BAND_COLORS,
         "standalone": standalone,
@@ -572,7 +585,7 @@ function renderDetail() {{
       <div class="stat"><div class="label">Segmento</div><div class="value">#${{seg.segment_id}}</div></div>
       <div class="stat"><div class="label">Area</div><div class="value">${{seg.area_ha.toFixed(2)}} ha</div></div>
       <div class="stat"><div class="label">Pixels</div><div class="value">${{seg.n_pixels.toLocaleString()}}</div></div>
-      <div class="stat"><div class="label">Spectral variation</div><div class="value">${{seg.variacion_espectral.toFixed(2)}}</div></div>
+      <div class="stat"><div class="label">Spectral variation</div><div class="value">${{seg.spectral_variation.toFixed(2)}}</div></div>
     </div>
     <p style="margin:0 0 10px;font-size:0.82rem;color:var(--muted)">
       Spectral variation = media de σ espacial por banda (blue…swir2).
@@ -614,46 +627,59 @@ loadMap().then(renderDetail);
     html_path.write_text(html, encoding="utf-8")
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Build HTML viewer for per-segment spectral signatures.")
-    p.add_argument("--seg-root", type=Path, default=DEFAULT_SEG_ROOT)
-    p.add_argument("--grid-id", type=str, default=None, help="Single rectangle (default: all)")
-    p.add_argument("--html", type=Path, default=DEFAULT_HTML)
-    p.add_argument("--max-side", type=int, default=MAX_SIDE)
+def parsear_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Genera visor HTML de firmas espectrales por segmento."
+    )
+    p.add_argument("--seg-root", type=Path, default=DEFAULT_SEG_ROOT, help="Raíz de salidas de segmentación")
+    p.add_argument("--grid-id", type=str, default=None, help="Un solo rectángulo (default: todos)")
+    p.add_argument("--html", type=Path, default=DEFAULT_HTML, help="Ruta del HTML de salida")
+    p.add_argument("--max-side", type=int, default=MAX_SIDE, help="Lado máximo del quicklook (px)")
     p.add_argument(
         "--standalone",
         action="store_true",
-        help="Standalone HTML (embedded images; no http.server)",
+        help="HTML autónomo (imágenes embebidas; no requiere http.server)",
     )
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    rects = discover_rectangles(args.seg_root, args.grid_id)
+    args = parsear_args(argv)
+    rects = descubrir_rectangulos(args.seg_root, args.grid_id)
     assets_dir = args.html.parent / "assets"
 
     rects_meta: list[dict] = []
-    segments_por_rect: dict[str, list[dict]] = {}
+    segmentos_por_rect: dict[str, list[dict]] = {}
 
     for rect in rects:
         gid = rect["grid_id"]
-        print(f"Exporting layers → {gid}")
-        rects_meta.append(export_rectangle_layers(rect, assets_dir, args.max_side))
-        segments_por_rect[gid] = load_segments(rect["gpkg_path"])
-        print(f"  {len(segmentos_por_rect[gid])} segments")
+        print(f"Exportando capas → {gid}")
+        rects_meta.append(exportar_capas_rectangulo(rect, assets_dir, args.max_side))
+        segmentos_por_rect[gid] = cargar_segmentos(rect["gpkg_path"])
+        print(f"  {len(segmentos_por_rect[gid])} segmentos")
 
-    build_html(rects_meta, segments_por_rect, args.html, assets_dir, standalone=args.standalone)
-    print(f"\nViewer: {args.html}")
+    construir_html(
+        rects_meta, segmentos_por_rect, args.html, assets_dir, standalone=args.standalone
+    )
+    print(f"\nVisor: {args.html}")
     if args.standalone:
-        print("Standalone mode: abre el .html directamente (doble clic o arrastrar al navegador).")
+        print("Modo autónomo: abre el .html directamente (doble clic o arrastrar al navegador).")
     else:
         print("El servidor debe correr EN EL CLUSTER (donde está el archivo).")
         print("Desde tu PC, reenvía el puerto con SSH:")
         print("  ssh -L 8765:localhost:8765 lserey@leftraru2")
-        print("Luego abre: http://localhost:8765/viewer/segmentos_firmas_viewer.html")
-        print(f"\nO regenera autónomo: python build_spectral_viewer.py --standalone --grid-id ...")
+        print("Luego abre: http://localhost:8765/viewer/segment_signatures_viewer.html")
+        print("\nO regenera autónomo: python build_spectral_viewer.py --standalone --grid-id ...")
     return 0
+
+
+# Aliases ingleses (compat)
+public_path = ruta_publica
+discover_rectangles = descubrir_rectangulos
+export_rectangle_layers = exportar_capas_rectangulo
+load_segments = cargar_segmentos
+build_html = construir_html
+parse_args = parsear_args
 
 
 if __name__ == "__main__":

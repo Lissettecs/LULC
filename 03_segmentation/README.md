@@ -1,123 +1,212 @@
-# Stage 03 — SLIC segmentation
+# Stage 03 — SLIC segmentation (multiannual)
 
-SLIC (scale 50, σ 0.1) + **RAG threshold p10** on SSL4EO sample rectangles, using
-**red, nir, swir1** from masked SBAND-184B mosaics (water + glaciers excluded).
+SLIC (scale 50, σ 0.1) + **RAG threshold p10** on CIM sample rectangles from the
+national revision plan (`rev_year1/2/3`). Uses **red, nir, swir1** from masked
+CIM 184-band mosaics (water + glacier already nodata). An **ecoregion mask**
+further excludes ocean / out-of-coverage pixels.
 
-Each segment gets a **spectral signature** (mean blue, green, red, nir, swir1, swir2)
-and **`variacion_espectral`**: mean spatial standard deviation across those bands.
+## Language convention
+
+| Surface | Language |
+|---------|----------|
+| Code (functions, variables, logs) | Spanish |
+| Output column names, filenames, this README | English |
 
 ## Layout
 
 ```
 03_segmentation/
 ├── config/
-│   ├── bands_184b.py       # 184-band rasterio indices
-│   ├── run_refs.py         # selection GPKG + revision plan paths
-│   ├── params_slic.py      # SLIC / RAG / buffer constants
-│   └── paths.py            # year-based paths (mask_mosaic_{year}, prod/…)
-├── rectangles.py           # load GPKG, build plan, mosaic/existing filters
-├── plan_segmentation.py
-├── run_slic_segmentation.py
-├── build_spectral_viewer.py
-├── consolidate_run_summary.py
+│   ├── bands_184b.py
+│   ├── run_refs.py          # GPKG_SELECCION + ecoregion path
+│   ├── params_slic.py
+│   └── paths.py             # CIM mosaic + prod/03_segmentation_cim/{YEAR}
+├── rectangles.py            # cargar_plan_multianual (melt + dedupe)
+├── ecoregion_mask.py        # nearest-neighbour warp to mosaic window
+├── run_slic_segmentation.py # driver
+├── characterize_segments.py # unified segments.gpkg (+ optional Parquet)
+├── mosaic_io.py
 ├── rag.py
 └── jobs/
-    ├── run_segmentation.sh
-    ├── run_segmentation.slurm
-    ├── prepare_segmentation_array.sh
-    ├── run_segmentation_array.slurm
-    ├── run_segmentation_consolidate.slurm
-    └── submit_segmentation_array.sh
 ```
 
-Set **`MAPBIOMAS_ROOT`** (default `/home/lserey/mapbiomas_land`) for data paths.
+Set **`MAPBIOMAS_ROOT`** (default `/home/lserey/mapbiomas_land`).
 
-## Year conventions
+## CRS model (EPSG:4326 end-to-end for clip)
 
-| Item | Pattern |
-|------|---------|
-| Masked mosaic | `{MAPBIOMAS_ROOT}/tmp/mask_mosaic_{year}/{TILE}/TMP-CHILE-{TILE}-{year}-SBAND-184B_masked.tif` |
-| Segmentation output | `{MAPBIOMAS_ROOT}/prod/segmentacion_slic_rev{rev_year}/` |
-| Rectangle filter | `rev_year1 == rev_year` in revision-plan GPKG |
+| Step | CRS |
+|------|-----|
+| Selection GPKG + mosaic + clip | **EPSG:4326** (no reprojection to clip) |
+| Spectral stats / SLIC | 4326 (pixel spectra unaffected by area distortion) |
+| `area_ha`, `perimeter_m`, compactness, elongation | measured after reprojecting **segment geometries** to **UTM** (`utm_epsg` from `utm_zone` or centroid longitude) |
+| Stored `geometry` in `segments.gpkg` | stays **EPSG:4326** |
 
-For another year, build `mask_mosaic_{year}` and run with `--rev-year` and `--year`
-(usually the same).
+## Mosaic input + features.parquet (parameterized)
 
-## Plan only
+| Param | CLI | Env | Notes |
+|-------|-----|-----|-------|
+| Mosaic kind | `--mosaic-kind` | `MOSAIC_KIND` | `184_mask_water` (default) or `11b` |
+| Mosaic root | `--mosaic-root` | `MOSAIC_ROOT` | Overrides kind preset path |
+| Band layout | `--band-layout` | `BAND_LAYOUT` | `auto` \| `184` \| `11b` |
+| Features Parquet | `--features-parquet` / `--no-features-parquet` | `FEATURES_PARQUET=0\|1` | Policy if unset: **ON** for 184, **OFF** for 11b |
+
+Presets (`config/mosaic_presets.py`):
+
+- `184_mask_water` → `mosaic_184bands_mask_water/{year}/`
+- `11b` → `mosaic_11bands_mask_water/{year}/` (`*_masked.tif` or `*-11B.tif`)
+
+For **11-band masked** runs, Parquet spectral features stay **pending** (not written). Re-run later with `--features-parquet` or `FEATURES_PARQUET=1` when ready. Summary records `features_parquet_skip`.
 
 ```bash
+# 184 masked (Parquet ON by default)
+python run_slic_segmentation.py --rev-year 2015 --mosaic-kind 184_mask_water --require-mosaic
+
+# 11B masked (Parquet OFF / pendiente)
+python run_slic_segmentation.py --rev-year 2009 --mosaic-kind 11b --require-mosaic --grid-id …
+
+# Force Parquet on 11B later
+FEATURES_PARQUET=1 python run_slic_segmentation.py … --mosaic-kind 11b --features-parquet
+```
+
+SLURM: `jobs/submit_segmentation_array.sh` (generic) and `jobs/submit_segmentation_11b_plan.sh` (11B lists + `FEATURES_PARQUET=0`).
+
+## Multiannual plan + mosaic gate
+
+1. Load national GPKG (`selection_with_rev_years.gpkg`, legacy `seleccion_con_rev_years.gpkg`).
+2. Melt `rev_year1/2/3` (+ roles) → long form; drop null / `-9999`.
+3. Dedupe by `(grid_id, rev_year)` (keep lowest `rev_slot`; extra slots in summary).
+4. Process only if year ∈ `ANIOS_PERMITIDOS` (184 default `[2015]`; 11b = all) **and** mosaic exists.
+5. Missing mosaic → `omitido: mosaico_ausente` in plan JSON; do not abort the batch.
+
+**Scaling to another year:** drop the new masked mosaic under the kind root and
+re-run with `--rev-year` / `--year` (and matching `--mosaic-kind`).
+
+## Inputs / outputs
+
+| | Path |
+|---|---|
+| Selection + rev years | `prod/samples_cim/02_selection/…/selection_with_rev_years.gpkg` (legacy `02_seleccion` / `seleccion_con_rev_years.gpkg`) |
+| Masked mosaics (184) | `mosaic_184bands_mask_water/{year}/CHILE-{TILE}-{year}-*_masked.tif` |
+| Masked mosaics (11B) | `mosaic_11bands_mask_water/{year}/…_masked.tif` |
+| Ecoregions | `ancillary_data/ecorregiones_col3_30m_alineado_lulc.tif` (0 = ocean/nodata) |
+| Output root | `prod/03_segmentation_cim/{year}/{TILE}/{grid_id}/` |
+
+Per rectangle–year:
+
+```
+{grid_id}_{year}_slic_ragp10_s50_sig0.1_labels.tif
+{grid_id}_{year}_segments.gpkg          # sole vector product (reviewer)
+{grid_id}_{year}_features.parquet       # 184: default ON; 11b: pendiente
+{grid_id}_{year}_summary.json
+```
+
+Filenames match `04_labeling` globs (`*_slic_ragp*_labels.tif`, `*_segments.gpkg`).
+
+## Output schemas
+
+One **Polygon** row per segment (no `MultiPolygon`). Geometry CRS = **EPSG:4326**.
+`segment_uid` = `{grid_id}_{rev_year}_{label:06d}`. `area_ha` from UTM geometry
+(**not** `n_pixels × 0.09`). Characterization owns the single GPKG (`revision.gpkg` removed).
+
+### `{grid_id}_{year}_segments.gpkg`
+
+~31 columns. Review / labeling product (also consumed by `04_labeling`).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `segment_id` | int | Local raster label (INTEGER) |
+| `segment_uid` | text | Global id: `{grid_id}_{rev_year}_{label:06d}` |
+| `grid_id` | text | Sample rectangle id |
+| `rect_id` | text | Rectangle id from selection plan |
+| `rev_year` | int | Revision year (mosaic / labeling year) |
+| `rev_slot` | int | Slot in plan (`1`/`2`/`3` from `rev_year1/2/3`) |
+| `rev_role` | text | Role from selection plan |
+| `reviewed_class` | float/null | Empty at write time; filled in review |
+| `n_valid_pixels` | int | Valid (non-nodata) pixels in segment |
+| `nodata_frac` | float | Fraction of nodata inside segment footprint |
+| `n_pixels` | int | Total pixels in segment footprint |
+| `spectral_variation` | float | Mean of signature-band `_std` values |
+| `blue_mean` … `swir2_mean` | float | Mean of optical signature bands |
+| `blue_std` … `swir2_std` | float | Std of optical signature bands |
+| `eco_dom_id` | int | Dominant ecoregion code |
+| `eco_dom_name` | text | Dominant ecoregion name |
+| `utm_epsg` | int | UTM EPSG used for area / shape metrics |
+| `utm_zone` | int | UTM zone |
+| `mgrs_dom` | text | Dominant MGRS / CIM tile |
+| `area_ha` | float | Area in hectares (UTM) |
+| `geometry` | polygon | Segment polygon, EPSG:4326 |
+
+Signature bands (GPKG only): `blue`, `green`, `red`, `nir`, `swir1`, `swir2`
+(resolved by name for both 184 and 11B stacks).
+
+Year consolidation may add `source_file` (path of the per-rectangle GPKG).
+
+### `{grid_id}_{year}_features.parquet`
+
+Default **ON** for `184_mask_water` (~383 columns); **pending / OFF** for `11b`.
+One row per `segment_uid`. Join to GPKG on `segment_uid`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `segment_uid` | text | Same key as GPKG |
+| `segment_id` | int | Local raster label |
+| `grid_id` | text | Sample rectangle id |
+| `rev_year` | int | Revision year |
+| `rev_slot` | int | Plan slot |
+| `n_valid_pixels` | int | Valid pixels |
+| `nodata_frac` | float | Nodata fraction |
+| `area_px` | int | Footprint pixels |
+| `area_ha` | float | Area (ha, UTM) |
+| `perimeter_m` | float | Perimeter (m, UTM) |
+| `compactness` | float | Shape compactness |
+| `elongation` | float | Shape elongation |
+| `{mosaic_band}_median` | float | Per-segment median of mosaic band |
+| `{mosaic_band}_std` | float | Per-segment std of mosaic band |
+| `aspect_sin_median` / `_std` | float | Circular aspect (sin), if present |
+| `aspect_cos_median` / `_std` | float | Circular aspect (cos), if present |
+
+Spectral columns use the 184-band CIM catalog (`config/catalogo_bandas.py`), e.g.
+`ndvi_median_median`, `ndvi_median_std`, `elevation_median`, `slope_std`,
+`blue_amp_median`, … (~186 mosaic features × `{median,std}` ≈ 371 spectral columns).
+
+Requires a full / near-full stack (`BANDAS_PARQUET_MINIMAS`); short 11B stacks skip
+Parquet unless forced later with `--features-parquet`.
+
+## Valid mask
+
+```
+valid &= (~mosaic_nodata) & inside_rectangle & ecoregion_land
+```
+
+Ecoregion alignment uses **nearest** resampling (grid origins/signs differ from
+per-tile mosaics). Summary records `ocean_masked_frac`.
+
+## Run
+
+```bash
+export MAPBIOMAS_ROOT=/home/lserey/mapbiomas_land
 cd 03_segmentation
-python plan_segmentation.py --rev-year 2015
-python plan_segmentation.py --rev-year 2015 --require-mosaic --skip-existing
+
+# Plan only
+python plan_segmentation.py --rev-year 2015 --require-mosaic
+
+# Pilot: one zone-18 and one zone-19 rectangle
+python run_slic_segmentation.py --rev-year 2015 --require-mosaic \
+  --grid-id SK-18-Z-A_3x3_c006_r000
+python run_slic_segmentation.py --rev-year 2015 --require-mosaic \
+  --grid-id SI-19-Y-A_2x2_c009_r002
+
+# Batch
+python run_slic_segmentation.py --rev-year 2015 --require-mosaic --skip-existing
 ```
 
-## Pilot (one tile or rectangle)
+## Compatibility with `04_labeling`
 
-```bash
-python run_slic_segmentation.py --test-tile 18GXA
-python run_slic_segmentation.py --grid-id 18GXA_3x3_c003_r003
-```
+- Do **not** edit stage 04.
+- `segment_id` remains INTEGER → `merge(on="segment_id")` unchanged.
+- Extra GPKG columns are carried by `dissolve(aggfunc="first")`.
 
-## Production 2015
+## Out of scope (phase 2)
 
-```bash
-# Dry-run
-python run_slic_segmentation.py \
-  --rev-year 2015 --require-mosaic --skip-existing --dry-run
-
-# Full run (sequential)
-REV_YEAR=2015 SKIP_EXISTING=1 ./jobs/run_segmentation.sh
-```
-
-## SLURM array (parallel, recommended)
-
-One rectangle per array task:
-
-```bash
-REV_YEAR=2015 ARRAY_THROTTLE=16 ./jobs/submit_segmentation_array.sh
-```
-
-Default resources on `main`: 4 CPUs, 8G RAM, 1h30 per task, throttle `%16`.
-
-## Outputs per rectangle
-
-`prod/segmentacion_slic_rev{year}/{TILE}/{grid_id}/`:
-
-- `{grid_id}_slic_ragp10_s50_sig0.1_labels.tif` — segment_id raster (post-RAG)
-- `{grid_id}_slic_ragp10_segments.gpkg` — polygons + band stats + variation
-- `{grid_id}_summary.json`
-
-Run level:
-
-- `plan_rev{year}.json` — rectangle / mosaic / status inventory
-- `run_summary_rev{year}.json` — results and errors
-
-## SLIC parameters
-
-| Parameter | Value |
-|-----------|-------|
-| scale | 50 |
-| sigma | 0.1 |
-| compactness | 10 |
-| perimeter buffer | 100 px |
-| RAG | p10 |
-| n_segments | max(2, n_valid_pixels // scale) |
-
-Band indices: `config/bands_184b.py`.
-
-## Spectral signature viewer
-
-```bash
-python build_spectral_viewer.py --grid-id 18GXA_3x3_c003_r003
-
-cd "${MAPBIOMAS_ROOT}/prod/segmentacion_slic_rev2015"
-python3 -m http.server 8765
-# → http://localhost:8765/viewer/segment_signatures_viewer.html
-```
-
-## Inputs (reference)
-
-| Resource | Path |
-|----------|------|
-| Selection UTM18/19 | `config/run_refs.py` → `seleccion_con_rev_years_utm{18,19}.gpkg` |
-| 2015 mosaics | `{MAPBIOMAS_ROOT}/tmp/mask_mosaic_2015/{TILE}/` |
+National Parquet consolidation, per-segment ecoregion mode, percentiles / IQR,
+any change to `04_labeling`.

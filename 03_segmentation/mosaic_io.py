@@ -12,6 +12,7 @@ from config.params_slic import MOSAIC_NODATA
 
 
 def ventana_rectangulo(src: rasterio.io.DatasetReader, geom) -> Window:
+    """Ventana raster alineada al bounding box de la geometría."""
     win = geometry_window(src, [geom], pad_x=0, pad_y=0)
     return win.round_offsets().round_lengths()
 
@@ -22,6 +23,11 @@ def ventana_con_buffer(
     raster_w: int,
     raster_h: int,
 ) -> tuple[Window, dict[str, int]]:
+    """
+    Amplía la ventana con buffer y reporta píxeles efectivos por lado.
+
+    Keys del dict: left / right / top / bottom (contrato en inglés).
+    """
     col_off = int(win.col_off)
     row_off = int(win.row_off)
     width = int(win.width)
@@ -40,6 +46,7 @@ def ventana_con_buffer(
 
 
 def recortar_centro(arr: np.ndarray, buffer_efectivo: dict[str, int]) -> np.ndarray:
+    """Quita el buffer perimetral y deja solo el rectángulo original."""
     t = buffer_efectivo
     row0 = t["top"]
     row1 = arr.shape[0] - t["bottom"] if t["bottom"] else arr.shape[0]
@@ -53,6 +60,7 @@ def leer_bandas_ventana(
     window: Window,
     indices_bandas: list[int],
 ) -> np.ndarray:
+    """Lee bandas (índices rasterio 1-based) en forma (H, W, C)."""
     return np.stack(
         [src.read(i, window=window).astype(np.float32) for i in indices_bandas],
         axis=-1,

@@ -4,6 +4,18 @@ Repositorio de flujos de trabajo para MapBiomas Chile Collection 3.
 
 ## Estructura del repositorio
 
+### [02_split/](02_split/)
+
+Generación de muestras CIM 1:250.000: grillas geográficas, caracterización, selección de rectángulos y plan de revisión multianual.
+
+Documentación en [02_split/README.md](02_split/README.md).
+
+### [03_segmentation/](03_segmentation/)
+
+Segmentación SLIC + RAG sobre rectángulos del plan de revisión (mosaicos CIM 184B / 11B), con máscara de ecorregión y jobs SLURM.
+
+Documentación en [03_segmentation/README.md](03_segmentation/README.md). Sincronizado con `seglabel-pipeline/03_segmentation`.
+
 ### [generacion-mosaicos/](generacion-mosaicos/)
 
 Contiene el flujo de generación de mosaicos Landsat por grillas MGRS.

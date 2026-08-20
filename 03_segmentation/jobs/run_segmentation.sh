@@ -27,7 +27,7 @@ GRID_ID="${GRID_ID:-}"
 LIMIT="${LIMIT:-}"
 
 MOSAIC_ROOT="${MOSAIC_ROOT:-${MAPBIOMAS_ROOT}/tmp/mask_mosaic_${YEAR}}"
-OUTPUT_DIR="${OUTPUT_DIR:-${MAPBIOMAS_ROOT}/prod/segmentacion_slic_rev${REV_YEAR}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${MAPBIOMAS_ROOT}/prod/03_segmentation_cim/${REV_YEAR}}"
 PLAN_JSON="${PLAN_JSON:-${OUTPUT_DIR}/plan_rev${REV_YEAR}.json}"
 LOG_DIR="${LOG_DIR:-${OUTPUT_DIR}/logs}"
 mkdir -p "${LOG_DIR}"

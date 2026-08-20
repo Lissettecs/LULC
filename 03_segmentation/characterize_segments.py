@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Caracterización zonal de segmentos SLIC+RAG: GPKG de revisión + Parquet de features.
+Caracterización zonal de segmentos SLIC+RAG: segments.gpkg único + Parquet opcional.
 
 Se ejecuta después de la segmentación (o sobre etiquetas ya existentes).
-Una sola pasada de estadísticos por segmento; la firma espectral del GPKG
-se proyecta desde ese mismo cálculo (no se recorre el stack dos veces).
+Columnas de salida en inglés. Geometría en EPSG:4326; métricas de área en UTM.
 
-Fase 2 (no implementada): percentiles p10/p90, IQR, contexto vecinal,
-poda de bandas *_min/_max/_amp/_stdDev, consolidación nacional, selección de features.
+Fase 2 (no implementada): percentiles, IQR, contexto vecinal, consolidación nacional.
 """
 
 from __future__ import annotations
@@ -25,7 +23,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 from rasterio.features import shapes
-from shapely.geometry import shape
+from shapely.geometry import MultiPolygon, shape
 
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO))
@@ -34,42 +32,35 @@ from config.bands_184b import SIGNATURE_BANDS  # noqa: E402
 from config.catalogo_bandas import nombres_bandas_mosaico  # noqa: E402
 from config.params_slic import (  # noqa: E402
     BUFFER_PX,
-    MOSAIC_NODATA,
     RAG_PERCENTILE,
     SLIC_COMPACTNESS,
     SLIC_SCALE,
     SLIC_SIGMA,
 )
 from config.paths import output_dir  # noqa: E402
-from config.run_refs import GPKG_UTM18, GPKG_UTM19  # noqa: E402
-from rectangles import load_selection_gpkg  # noqa: E402
-from io_mosaico import leer_bandas_recorte, leer_ventana_ampliada, recortar_centro
+from config.run_refs import GPKG_SELECCION, GPKG_UTM18, GPKG_UTM19  # noqa: E402
+from rectangles import cargar_gpkg_seleccion, utm_epsg_desde_fila  # noqa: E402
+from mosaic_io import leer_bandas_recorte, leer_ventana_ampliada, recortar_centro
 
 # === PARÁMETROS DE CARACTERIZACIÓN ===
-# --- Firma espectral (GPKG de revisión) ---
 BANDAS_FIRMA = ["blue", "green", "red", "nir", "swir1", "swir2"]
-ESTADISTICOS_FIRMA = ["media", "std"]
+ESTADISTICOS_FIRMA = ["mean", "std"]
 
-# --- Features (Parquet) ---
 BANDAS_FEATURES = "todas"
-ESTADISTICOS_FEAT = ["mediana", "std"]
+ESTADISTICOS_FEAT = ["median", "std"]
 EXCLUIR_DE_FEATURES: list[str] = []
 
-# --- Manejo especial de bandas ---
 MANEJAR_ASPECT_CIRCULAR = True
 BANDAS_CIRCULARES = ["aspect"]
 
-# --- Geometría e identificación ---
-PIXEL_SIZE_M = 30
-CAMPO_ID = "segment_id"
-PLANTILLA_ID = "{rect_id}_{label:06d}"
+PLANTILLA_UID = "{grid_id}_{rev_year}_{label:06d}"
 SEG_VERSION = "slic_v1"
-CAMPO_CLASE = "clase_revisada"
+GENERAR_FEATURES_PARQUET = True
 
-# --- Nodata / validez ---
-VALOR_NODATA = 0
+# Bandas mínimas esperadas para emitir Parquet (stack 184 completo).
+BANDAS_PARQUET_MINIMAS = 100
 
-# --- Salidas (junto a labels/summary de cada rectángulo; año vía REV_YEAR en jobs) ---
+
 def dir_salida_caracterizacion(rev_year: int | None = None) -> Path:
     import os
 
@@ -80,7 +71,6 @@ def dir_salida_caracterizacion(rev_year: int | None = None) -> Path:
 DIR_SALIDA_BASE = dir_salida_caracterizacion()
 RUTA_MANIFIESTO = "manifiesto_caracterizacion.json"
 
-# Metadatos de rectángulo que se copian al GPKG si están presentes en la fila de selección.
 METADATOS_RECTANGULO = (
     "rect_id",
     "grid_id",
@@ -89,15 +79,15 @@ METADATOS_RECTANGULO = (
     "utm_epsg",
     "utm_zone",
     "mgrs_dom",
-    "rev_year1",
-    "rev_role1",
+    "rev_year",
+    "rev_slot",
+    "rev_role",
 )
 
 MAPA_FIRMA_RASTERIO = {nombre: idx for nombre, idx in SIGNATURE_BANDS}
 
 
 def _dir_salida_rectangulo(fila: pd.Series, base: Path | None = None) -> Path:
-    """Directorio del rectángulo: {base}/{tile}/{grid_id}/."""
     base = base or DIR_SALIDA_BASE
     tile = str(fila.get("_tile") or str(fila.get("grid_id", "")).split("_")[0]).upper()
     grid_id = str(fila.get("grid_id") or fila.get("rect_id"))
@@ -110,26 +100,8 @@ def _ruta_manifiesto(base: Path | None = None) -> Path:
     return (base or DIR_SALIDA_BASE) / RUTA_MANIFIESTO
 
 
-def reetiquetar_deterministico(etiquetas: np.ndarray, valido: np.ndarray) -> np.ndarray:
-    """Reordena etiquetas por posición raster (fila, col) del primer píxel."""
-    salida = np.zeros_like(etiquetas, dtype=np.int32)
-    candidatos = np.unique(etiquetas[(etiquetas > 0) & valido])
-    if candidatos.size == 0:
-        return salida
-
-    anclas: list[tuple[int, int, int]] = []
-    for etiqueta in candidatos:
-        filas, cols = np.where((etiquetas == etiqueta) & valido)
-        anclas.append((int(filas.min()), int(cols.min()), int(etiqueta)))
-    anclas.sort()
-
-    for nueva, (_, _, vieja) in enumerate(anclas, start=1):
-        salida[(etiquetas == vieja) & valido] = nueva
-    return salida
-
-
-def construir_segment_id(rect_id: str, etiqueta: int) -> str:
-    return PLANTILLA_ID.format(rect_id=rect_id, label=int(etiqueta))
+def construir_segment_uid(grid_id: str, rev_year: int, etiqueta: int) -> str:
+    return PLANTILLA_UID.format(grid_id=grid_id, rev_year=int(rev_year), label=int(etiqueta))
 
 
 def resolver_bandas_features(
@@ -150,7 +122,6 @@ def leer_stack_rectangulo(
     buffer_px: int = BUFFER_PX,
     buffer_efectivo: dict[str, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
-    """Lee el stack multibanda recortado al rectángulo (H, W, C)."""
     with rasterio.open(ruta_mosaico) as src:
         n_bandas = src.count
         indices = list(range(1, n_bandas + 1))
@@ -175,11 +146,6 @@ def _preparar_columnas_estadisticos(
     nombres_bandas: list[str],
     bandas_features: list[str],
 ) -> tuple[np.ndarray, list[str]]:
-    """
-    Devuelve matriz (N_pix, N_cols) y nombres de columnas para el groupby.
-
-    Si aspect está presente y MANEJAR_ASPECT_CIRCULAR, reemplaza aspect por sin/cos.
-    """
     cols_usar = [j for j, n in enumerate(nombres_bandas) if n in bandas_features]
     if not cols_usar:
         raise ValueError("No quedan bandas para caracterización tras filtros.")
@@ -189,11 +155,7 @@ def _preparar_columnas_estadisticos(
 
     for j in cols_usar:
         nombre = nombres_bandas[j]
-        if (
-            MANEJAR_ASPECT_CIRCULAR
-            and nombre in BANDAS_CIRCULARES
-        ):
-            # Grados → radianes; sin/cos evitan promediar ángulos directamente.
+        if MANEJAR_ASPECT_CIRCULAR and nombre in BANDAS_CIRCULARES:
             rad = np.deg2rad(stack[..., j].astype(np.float64))
             bloques.append(np.sin(rad).astype(np.float32))
             bloques.append(np.cos(rad).astype(np.float32))
@@ -212,11 +174,7 @@ def calcular_estadisticos_una_pasada(
     stack: np.ndarray,
     nombres_bandas: list[str],
 ) -> pd.DataFrame:
-    """
-    Estadísticos zonales en una pasada (media, mediana, std).
-
-    Solo píxeles con etiqueta > 0 y máscara ``valido`` entran al cálculo.
-    """
+    """Estadísticos zonales: mean / median / std (sufijos en inglés)."""
     union_estadisticos = sorted(set(ESTADISTICOS_FIRMA) | set(ESTADISTICOS_FEAT))
     bandas_features = resolver_bandas_features(nombres_bandas)
     mat_flat, nombres_cols = _preparar_columnas_estadisticos(stack, nombres_bandas, bandas_features)
@@ -230,30 +188,59 @@ def calcular_estadisticos_una_pasada(
 
     df_pix = pd.DataFrame(valores_pix, columns=nombres_cols)
     df_pix["__etiqueta__"] = etiquetas_pix
-
     agrupado = df_pix.groupby("__etiqueta__", sort=True)
 
     filas: list[dict[str, Any]] = []
     for etiqueta, grupo in agrupado:
-        fila: dict[str, Any] = {"etiqueta": int(etiqueta)}
+        fila: dict[str, Any] = {"segment_id": int(etiqueta)}
         arr = grupo.drop(columns="__etiqueta__").to_numpy(dtype=np.float64)
         n_validos = arr.shape[0]
         n_total = int((etiquetas == etiqueta).sum())
-        fila["n_pixeles_validos"] = n_validos
-        fila["frac_nodata"] = round(1.0 - n_validos / max(n_total, 1), 6)
+        fila["n_valid_pixels"] = n_validos
+        fila["n_pixels"] = n_total
+        fila["nodata_frac"] = round(1.0 - n_validos / max(n_total, 1), 6)
 
         for j, nombre_col in enumerate(nombres_cols):
             col = arr[:, j]
-            if "media" in union_estadisticos:
-                fila[f"{nombre_col}_media"] = float(np.mean(col))
-            if "mediana" in union_estadisticos:
-                fila[f"{nombre_col}_mediana"] = float(np.median(col))
+            if "mean" in union_estadisticos:
+                fila[f"{nombre_col}_mean"] = float(np.mean(col))
+            if "median" in union_estadisticos:
+                fila[f"{nombre_col}_median"] = float(np.median(col))
             if "std" in union_estadisticos:
                 fila[f"{nombre_col}_std"] = float(np.std(col, ddof=0))
 
+        # variación espectral (media de std de las 6 bandas de firma si disponibles)
+        stds_firma = []
+        for b in BANDAS_FIRMA:
+            # columna en stack: blue_median_std etc. según catálogo
+            pass
         filas.append(fila)
 
-    return pd.DataFrame(filas).sort_values("etiqueta").reset_index(drop=True)
+    return pd.DataFrame(filas).sort_values("segment_id").reset_index(drop=True)
+
+
+def _nombre_stack_firma(nombre_corto: str, nombres_bandas: list[str]) -> str:
+    """Resuelve el nombre de banda en el stack (184 o 11B) para una firma corta."""
+    prefer = [
+        n
+        for n in nombres_bandas
+        if n == f"{nombre_corto}_median" or n == nombre_corto
+    ]
+    if prefer:
+        return prefer[0]
+    prefijo = [
+        n
+        for n in nombres_bandas
+        if n.startswith(f"{nombre_corto}_") or n.startswith(f"{nombre_corto}_median")
+    ]
+    if prefijo:
+        return prefijo[0]
+    idx_rasterio = MAPA_FIRMA_RASTERIO.get(nombre_corto)
+    if idx_rasterio is not None and 1 <= idx_rasterio <= len(nombres_bandas):
+        return nombres_bandas[idx_rasterio - 1]
+    raise KeyError(
+        f"No se encontró banda de firma '{nombre_corto}' en {nombres_bandas[:12]}…"
+    )
 
 
 def _columna_firma(
@@ -262,58 +249,52 @@ def _columna_firma(
     stats: pd.DataFrame,
     nombres_bandas: list[str],
 ) -> pd.Series:
-    """Proyecta firma espectral desde stats ya calculados (sin recomputar)."""
-    idx_rasterio = MAPA_FIRMA_RASTERIO[nombre_corto]
-    nombre_stack = nombres_bandas[idx_rasterio - 1]
+    nombre_stack = _nombre_stack_firma(nombre_corto, nombres_bandas)
     col = f"{nombre_stack}_{estadistico}"
     if col not in stats.columns:
         raise KeyError(f"Columna de firma esperada ausente: {col}")
     return stats[col]
 
 
-def _columnas_parquet(stats: pd.DataFrame, nombres_bandas: list[str]) -> pd.DataFrame:
-    bandas = resolver_bandas_features(nombres_bandas)
-    cols_id = ["etiqueta", "n_pixeles_validos", "frac_nodata"]
-    cols_feat: list[str] = []
-    for nombre in bandas:
-        if MANEJAR_ASPECT_CIRCULAR and nombre in BANDAS_CIRCULARES:
-            bases = [f"{nombre}_sin", f"{nombre}_cos"]
-        else:
-            bases = [nombre]
-        for base in bases:
-            for est in ESTADISTICOS_FEAT:
-                col = f"{base}_{est}"
-                if col in stats.columns:
-                    cols_feat.append(col)
-    existentes = [c for c in cols_id + cols_feat if c in stats.columns]
-    return stats[existentes].copy()
-
-
-def vectorizar_segmentos(
+def vectorizar_segmentos_monoparte(
     etiquetas: np.ndarray,
     transform,
     crs: str,
 ) -> gpd.GeoDataFrame:
+    """Una geometría Polygon por segment_id; aborta si hay MultiPolygon o ids duplicados."""
+    vistos: set[int] = set()
     geoms = []
     vals = []
-    for geom, val in shapes(etiquetas.astype(np.int32), mask=etiquetas > 0, transform=transform):
+    for geom, val in shapes(
+        etiquetas.astype(np.int32),
+        mask=etiquetas > 0,
+        transform=transform,
+        connectivity=8,
+    ):
         etiqueta = int(val)
         if etiqueta == 0:
             continue
-        geoms.append(shape(geom))
+        if etiqueta in vistos:
+            raise ValueError(
+                f"segment_id={etiqueta} produce más de un polígono (¿falló "
+                f"_reetiquetar_componentes_conexas?). Se espera monoparte."
+            )
+        vistos.add(etiqueta)
+        g = shape(geom)
+        if isinstance(g, MultiPolygon):
+            raise ValueError(f"segment_id={etiqueta} es MultiPolygon; abortando.")
+        geoms.append(g)
         vals.append(etiqueta)
 
     if not geoms:
-        return gpd.GeoDataFrame(columns=["etiqueta", "geometry"], crs=crs)
+        return gpd.GeoDataFrame(columns=["segment_id", "geometry"], crs=crs)
 
-    gdf = gpd.GeoDataFrame({"etiqueta": vals, "geometry": geoms}, crs=crs)
-    # Un segmento puede tener varios polígonos disjuntos → una fila por etiqueta.
-    return gdf.dissolve(by="etiqueta", as_index=False)
+    return gpd.GeoDataFrame({"segment_id": vals, "geometry": geoms}, crs=crs)
 
 
 def _elongacion(geom) -> float:
     mrr = geom.minimum_rotated_rectangle
-    coords = np.array(mrr.exterior.coords[:4])
+    coords = np.asarray(mrr.exterior.coords[:4])
     lados = sorted(
         float(np.linalg.norm(coords[i] - coords[(i + 1) % 4])) for i in range(4)
     )
@@ -325,17 +306,17 @@ def _elongacion(geom) -> float:
 
 def calcular_metricas_geometricas(
     gdf: gpd.GeoDataFrame,
-    utm_epsg: str | int,
+    utm_epsg: int | str,
     etiquetas: np.ndarray,
 ) -> pd.DataFrame:
-    """Métricas en UTM (reproyección solo de geometrías)."""
-    epsg = str(utm_epsg).replace("EPSG:", "")
-    gdf_utm = gdf.to_crs(epsg=int(epsg))
+    """Área / perímetro / forma midiendo en UTM; no usa n_pixels × constante."""
+    epsg = int(str(utm_epsg).replace("EPSG:", ""))
+    gdf_utm = gdf.to_crs(epsg=epsg)
 
     registros = []
     for _, fila in gdf_utm.iterrows():
         geom = fila.geometry
-        etiqueta = int(fila["etiqueta"])
+        etiqueta = int(fila["segment_id"])
         area_m2 = float(geom.area)
         perimetro = float(geom.length)
         compacidad = (
@@ -343,12 +324,12 @@ def calcular_metricas_geometricas(
         )
         registros.append(
             {
-                "etiqueta": etiqueta,
+                "segment_id": etiqueta,
                 "area_px": int((etiquetas == etiqueta).sum()),
                 "area_ha": round(area_m2 / 10_000.0, 6),
-                "perimetro_m": round(perimetro, 4),
-                "compacidad": round(compacidad, 6),
-                "elongacion": round(_elongacion(geom), 6),
+                "perimeter_m": round(perimetro, 4),
+                "compactness": round(compacidad, 6),
+                "elongation": round(_elongacion(geom), 6),
             }
         )
     return pd.DataFrame(registros)
@@ -358,41 +339,82 @@ def _metadatos_rectangulo(fila: pd.Series) -> dict[str, Any]:
     out: dict[str, Any] = {}
     rect_id = str(fila.get("rect_id") or fila.get("grid_id", ""))
     out["rect_id"] = rect_id
+    out["grid_id"] = str(fila.get("grid_id") or rect_id)
     for campo in METADATOS_RECTANGULO:
         if campo in fila.index and pd.notna(fila[campo]):
             out[campo] = fila[campo]
-    if "grid_id" not in out and "grid_id" in fila.index:
-        out["grid_id"] = fila["grid_id"]
+    if "rev_year" not in out and "rev_year1" in fila.index and pd.notna(fila["rev_year1"]):
+        out["rev_year"] = int(fila["rev_year1"])
+    if "rev_role" not in out and "rev_role1" in fila.index and pd.notna(fila["rev_role1"]):
+        out["rev_role"] = str(fila["rev_role1"])
+    if "rev_slot" not in out:
+        out["rev_slot"] = int(fila.get("rev_slot", 1) or 1)
+    if "utm_epsg" not in out:
+        out["utm_epsg"] = utm_epsg_desde_fila(fila)
     return out
 
 
-def armar_gpkg_revision(
+def armar_segments_gpkg(
     gdf_geom: gpd.GeoDataFrame,
     stats: pd.DataFrame,
+    metricas: pd.DataFrame,
     fila: pd.Series,
     nombres_bandas: list[str],
 ) -> gpd.GeoDataFrame:
     meta = _metadatos_rectangulo(fila)
-    rect_id = meta["rect_id"]
+    grid_id = str(meta["grid_id"])
+    rev_year = int(meta["rev_year"])
 
-    gdf = gdf_geom.merge(stats, on="etiqueta", how="inner")
-    gdf[CAMPO_ID] = gdf["etiqueta"].map(lambda e: construir_segment_id(rect_id, int(e)))
-    gdf[CAMPO_CLASE] = np.nan
+    gdf = gdf_geom.merge(stats, on="segment_id", how="inner")
+    gdf = gdf.merge(metricas[["segment_id", "area_ha"]], on="segment_id", how="left")
+    gdf["segment_uid"] = gdf["segment_id"].map(
+        lambda e: construir_segment_uid(grid_id, rev_year, int(e))
+    )
+    gdf["reviewed_class"] = np.nan
 
+    # Firma 6 bandas con nombres cortos
     for nombre in BANDAS_FIRMA:
-        for est in ESTADISTICOS_FIRMA:
-            gdf[f"{nombre}_{est}"] = _columna_firma(nombre, est, gdf, nombres_bandas)
+        gdf[f"{nombre}_mean"] = _columna_firma(nombre, "mean", gdf, nombres_bandas)
+        gdf[f"{nombre}_std"] = _columna_firma(nombre, "std", gdf, nombres_bandas)
 
-    columnas = [CAMPO_ID, CAMPO_CLASE, "n_pixeles_validos", "frac_nodata"]
-    columnas += [f"{b}_{e}" for b in BANDAS_FIRMA for e in ESTADISTICOS_FIRMA]
-    columnas += [c for c in METADATOS_RECTANGULO if c in meta]
+    # Variación espectral = media de std de las 6 bandas
+    gdf["spectral_variation"] = gdf[[f"{b}_std" for b in BANDAS_FIRMA]].mean(axis=1).round(6)
+
     for c, v in meta.items():
         if c not in gdf.columns:
             gdf[c] = v
 
-    cols_finales = ["geometry"] + [c for c in columnas if c in gdf.columns]
-    # Evitar duplicar geometry
-    cols_finales = list(dict.fromkeys(cols_finales))
+    if (gdf["n_valid_pixels"] == 0).any():
+        raise ValueError("Hay segmentos con n_valid_pixels == 0.")
+    if gdf["segment_uid"].duplicated().any():
+        raise ValueError("segment_uid duplicado en segments.gpkg.")
+    if gdf.crs is None or gdf.crs.to_epsg() != 4326:
+        raise ValueError(f"Geometría debe quedar en EPSG:4326, obtenido {gdf.crs}")
+
+    columnas = [
+        "segment_id",
+        "segment_uid",
+        "grid_id",
+        "rect_id",
+        "rev_year",
+        "rev_slot",
+        "rev_role",
+        "reviewed_class",
+        "n_valid_pixels",
+        "nodata_frac",
+        "n_pixels",
+        "spectral_variation",
+        *[f"{b}_mean" for b in BANDAS_FIRMA],
+        *[f"{b}_std" for b in BANDAS_FIRMA],
+        "eco_dom_id",
+        "eco_dom_name",
+        "utm_epsg",
+        "utm_zone",
+        "mgrs_dom",
+        "area_ha",
+        "geometry",
+    ]
+    cols_finales = [c for c in columnas if c in gdf.columns]
     return gdf[cols_finales]
 
 
@@ -402,39 +424,75 @@ def armar_parquet_features(
     fila: pd.Series,
     nombres_bandas: list[str],
 ) -> pd.DataFrame:
-    rect_id = str(fila.get("rect_id") or fila.get("grid_id", ""))
-    feat = _columnas_parquet(stats, nombres_bandas)
-    feat = feat.merge(metricas, on="etiqueta", how="inner")
-    feat[CAMPO_ID] = feat["etiqueta"].map(lambda e: construir_segment_id(rect_id, int(e)))
-    cols = [CAMPO_ID] + [c for c in feat.columns if c not in ("etiqueta", CAMPO_ID)]
-    return feat[cols]
+    meta = _metadatos_rectangulo(fila)
+    grid_id = str(meta["grid_id"])
+    rev_year = int(meta["rev_year"])
+
+    bandas = resolver_bandas_features(nombres_bandas)
+    cols_feat: list[str] = ["segment_id", "n_valid_pixels", "nodata_frac"]
+    for nombre in bandas:
+        if MANEJAR_ASPECT_CIRCULAR and nombre in BANDAS_CIRCULARES:
+            bases = [f"{nombre}_sin", f"{nombre}_cos"]
+        else:
+            bases = [nombre]
+        for base in bases:
+            for est in ESTADISTICOS_FEAT:
+                col = f"{base}_{est}"
+                if col in stats.columns:
+                    cols_feat.append(col)
+
+    feat = stats[[c for c in cols_feat if c in stats.columns]].copy()
+    feat = feat.merge(metricas, on="segment_id", how="inner")
+    feat["segment_uid"] = feat["segment_id"].map(
+        lambda e: construir_segment_uid(grid_id, rev_year, int(e))
+    )
+    feat["grid_id"] = grid_id
+    feat["rev_year"] = rev_year
+    feat["rev_slot"] = int(meta.get("rev_slot", 1))
+
+    # Renombrar aspect_sin_median / aspect_cos_median si aplica
+    rename = {}
+    for c in list(feat.columns):
+        if c.endswith("_median") or c.endswith("_std") or c.endswith("_mean"):
+            continue
+    # Asegurar que no queden sufijos en español
+    malas = [c for c in feat.columns if "_mediana" in c or c.endswith("_media")]
+    if malas:
+        raise ValueError(f"Columnas no estandarizadas al inglés: {malas}")
+
+    orden = [
+        "segment_uid",
+        "segment_id",
+        "grid_id",
+        "rev_year",
+        "rev_slot",
+        "n_valid_pixels",
+        "nodata_frac",
+        "area_px",
+        "area_ha",
+        "perimeter_m",
+        "compactness",
+        "elongation",
+    ]
+    resto = [c for c in feat.columns if c not in orden]
+    return feat[[c for c in orden if c in feat.columns] + resto]
 
 
-def verificar_consistencia_gpkg_parquet(gdf: gpd.GeoDataFrame, df_parquet: pd.DataFrame) -> None:
-    ids_gpkg = gdf[CAMPO_ID].astype(str)
-    ids_parquet = df_parquet[CAMPO_ID].astype(str)
-
-    if ids_gpkg.duplicated().any():
-        dup = ids_gpkg[ids_gpkg.duplicated()].iloc[0]
-        raise ValueError(f"segment_id duplicado en GPKG: {dup}")
-    if ids_parquet.duplicated().any():
-        dup = ids_parquet[ids_parquet.duplicated()].iloc[0]
-        raise ValueError(f"segment_id duplicado en Parquet: {dup}")
-
-    set_g = set(ids_gpkg)
-    set_p = set(ids_parquet)
-    if set_g != set_p:
-        solo_g = sorted(set_g - set_p)[:5]
-        solo_p = sorted(set_p - set_g)[:5]
-        raise ValueError(
-            "Conjuntos de segment_id difieren entre GPKG y Parquet. "
-            f"Solo GPKG (muestra): {solo_g}; solo Parquet (muestra): {solo_p}"
-        )
-
-    if (gdf["n_pixeles_validos"] == 0).any():
-        raise ValueError("Hay segmentos con n_pixeles_validos == 0 en el GPKG.")
-    if (df_parquet["n_pixeles_validos"] == 0).any():
-        raise ValueError("Hay segmentos con n_pixeles_validos == 0 en el Parquet.")
+def verificar_consistencia(
+    gdf: gpd.GeoDataFrame,
+    df_parquet: pd.DataFrame | None,
+) -> None:
+    if gdf["segment_uid"].duplicated().any():
+        raise ValueError("segment_uid duplicado en GPKG")
+    if (gdf["n_valid_pixels"] == 0).any():
+        raise ValueError("n_valid_pixels == 0 en GPKG")
+    if df_parquet is None:
+        return
+    if set(gdf["segment_uid"].astype(str)) != set(df_parquet["segment_uid"].astype(str)):
+        raise ValueError("segment_uid difiere entre segments.gpkg y features.parquet")
+    malas = [c for c in df_parquet.columns if "_mediana" in c]
+    if malas:
+        raise ValueError(f"Columnas _mediana residuales: {malas}")
 
 
 def actualizar_manifiesto(
@@ -451,15 +509,10 @@ def actualizar_manifiesto(
         manifiesto = {
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M"),
             "SEG_VERSION": SEG_VERSION,
-            "PLANTILLA_ID": PLANTILLA_ID,
-            "PIXEL_SIZE_M": PIXEL_SIZE_M,
+            "PLANTILLA_UID": PLANTILLA_UID,
             "algoritmo": "SLIC+RAG",
             "parametros_segmentacion": params_segmentacion,
             "BANDAS_FIRMA": BANDAS_FIRMA,
-            "ESTADISTICOS_FIRMA": ESTADISTICOS_FIRMA,
-            "BANDAS_FEATURES": BANDAS_FEATURES,
-            "ESTADISTICOS_FEAT": ESTADISTICOS_FEAT,
-            "bandas_escritas_features": resolver_bandas_features(nombres_bandas),
             "rectangulos": [],
         }
 
@@ -488,48 +541,76 @@ def caracterizar_rectangulo(
     dir_corrida: Path | None = None,
     dir_salida_base: Path | None = None,
     buffer_efectivo: dict[str, int] | None = None,
+    generar_features_parquet: bool = GENERAR_FEATURES_PARQUET,
 ) -> dict[str, Any]:
-    """Genera GPKG de revisión, Parquet de features y actualiza manifiesto."""
+    """Escribe ``{grid_id}_{year}_segments.gpkg`` (+ Parquet opcional)."""
+    del buffer_efectivo  # API estable; no se usa aquí
     base = dir_salida_base or DIR_SALIDA_BASE
     dir_out = dir_corrida or _dir_salida_rectangulo(fila, base)
-    rect_id = str(fila.get("rect_id") or fila.get("grid_id", ""))
+    meta = _metadatos_rectangulo(fila)
+    rect_id = str(meta["rect_id"])
+    grid_id = str(meta["grid_id"])
+    rev_year = int(meta["rev_year"])
 
-    etiquetas = reetiquetar_deterministico(etiquetas.astype(np.int32), valido)
+    # NO reetiquetar: segment_id debe coincidir con labels.tif
+    etiquetas = etiquetas.astype(np.int32)
     stats = calcular_estadisticos_una_pasada(etiquetas, valido, stack, nombres_bandas)
     if stats.empty:
         raise ValueError(f"{rect_id}: sin segmentos válidos para caracterizar.")
 
-    gdf_geom = vectorizar_segmentos(etiquetas, transform, crs)
-    utm_epsg = fila.get("utm_epsg", "EPSG:32718")
+    gdf_geom = vectorizar_segmentos_monoparte(etiquetas, transform, crs)
+    if gdf_geom.crs is None or str(gdf_geom.crs) == "None":
+        gdf_geom = gdf_geom.set_crs(crs)
+    if gdf_geom.crs.to_epsg() != 4326:
+        gdf_geom = gdf_geom.to_crs(epsg=4326)
+
+    utm_epsg = meta.get("utm_epsg") or utm_epsg_desde_fila(fila)
     metricas = calcular_metricas_geometricas(gdf_geom, utm_epsg, etiquetas)
 
-    gdf_rev = armar_gpkg_revision(gdf_geom, stats, fila, nombres_bandas)
-    df_feat = armar_parquet_features(stats, metricas, fila, nombres_bandas)
+    gdf_seg = armar_segments_gpkg(gdf_geom, stats, metricas, fila, nombres_bandas)
 
-    verificar_consistencia_gpkg_parquet(gdf_rev, df_feat)
+    ruta_gpkg = dir_out / f"{grid_id}_{rev_year}_segments.gpkg"
+    # Compatibilidad 04_labeling: también un alias slic_ragp si se pide
+    gdf_seg.to_file(ruta_gpkg, driver="GPKG")
 
-    ruta_gpkg = dir_out / f"{rect_id}_revision.gpkg"
-    ruta_parquet = dir_out / f"{rect_id}_features.parquet"
-    gdf_rev.to_file(ruta_gpkg, driver="GPKG")
-    df_feat.to_parquet(ruta_parquet, index=False)
+    ruta_parquet = None
+    df_feat = None
+    skip_parquet_motivo = None
+    if generar_features_parquet:
+        if len(nombres_bandas) < BANDAS_PARQUET_MINIMAS:
+            skip_parquet_motivo = f"stack_acotado_{len(nombres_bandas)}_bandas"
+            print(f"  [AVISO] Sin features.parquet ({skip_parquet_motivo})")
+        else:
+            df_feat = armar_parquet_features(stats, metricas, fila, nombres_bandas)
+            ruta_parquet = dir_out / f"{grid_id}_{rev_year}_features.parquet"
+            df_feat.to_parquet(ruta_parquet, index=False)
+    else:
+        skip_parquet_motivo = "pendiente_desactivado_por_parametro"
+        print("  [AVISO] features.parquet pendiente (FEATURES_PARQUET/flag off)")
+
+    verificar_consistencia(gdf_seg, df_feat)
 
     rutas = {
-        "gpkg_revision": str(ruta_gpkg),
-        "parquet_features": str(ruta_parquet),
-        "n_segmentos": len(gdf_rev),
+        "segments_gpkg": str(ruta_gpkg),
+        "features_parquet": str(ruta_parquet) if ruta_parquet else None,
+        "n_segmentos": len(gdf_seg),
     }
     actualizar_manifiesto(base, rect_id, params_segmentacion, nombres_bandas, rutas)
 
     print(
-        f"  Caracterización OK: {len(gdf_rev)} segmentos → {dir_out} "
-        f"({ruta_gpkg.name}, {ruta_parquet.name})"
+        f"  Caracterización OK: {len(gdf_seg)} segmentos → {dir_out} "
+        f"({ruta_gpkg.name}"
+        + (f", {Path(ruta_parquet).name}" if ruta_parquet else "")
+        + ")"
     )
     return {
         "rect_id": rect_id,
         "dir_salida": str(dir_out),
-        "gpkg_revision": str(ruta_gpkg),
-        "parquet_features": str(ruta_parquet),
-        "n_segmentos": len(gdf_rev),
+        "segments_gpkg": str(ruta_gpkg),
+        "features_parquet": str(ruta_parquet) if ruta_parquet else None,
+        "features_parquet_skip": skip_parquet_motivo,
+        "n_segmentos": len(gdf_seg),
+        "utm_epsg": int(str(utm_epsg).replace("EPSG:", "")),
         "manifiesto": str(_ruta_manifiesto(base)),
     }
 
@@ -541,19 +622,13 @@ def caracterizar_desde_segmentacion_existente(
     dir_corrida: Path | None = None,
     buffer_px: int = BUFFER_PX,
 ) -> dict[str, Any]:
-    """Caracteriza un rectángulo ya segmentado (labels.tif + summary.json)."""
-    summary_path = rect_dir / f"{fila['grid_id']}_summary.json"
-    if not summary_path.is_file():
-        summaries = sorted(rect_dir.glob("*_summary.json"))
-        if not summaries:
-            raise FileNotFoundError(f"Sin summary.json en {rect_dir}")
-        summary_path = summaries[0]
-
+    summary_candidates = sorted(rect_dir.glob("*_summary.json"))
+    if not summary_candidates:
+        raise FileNotFoundError(f"Sin summary.json en {rect_dir}")
+    summary_path = summary_candidates[-1]
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     labels_path = Path(summary["label_raster"])
     mosaic_path = Path(summary["mosaic_path"])
-    if not labels_path.is_file():
-        raise FileNotFoundError(f"Raster de etiquetas no encontrado: {labels_path}")
 
     with rasterio.open(labels_path) as src:
         etiquetas = src.read(1).astype(np.int32)
@@ -562,7 +637,6 @@ def caracterizar_desde_segmentacion_existente(
 
     beff = summary.get("buffer_effective_px") or summary.get("buffer_efectivo_px")
     if isinstance(beff, dict):
-        # Compatibilidad con summaries en español (izq/der/arriba/abajo).
         alias = {"izq": "left", "der": "right", "arriba": "top", "abajo": "bottom"}
         beff = {alias.get(k, k): v for k, v in beff.items()}
 
@@ -578,8 +652,6 @@ def caracterizar_desde_segmentacion_existente(
             f"para {fila['grid_id']}"
         )
 
-    valido = valido_stack.copy()
-
     params = {
         "slic_scale": summary.get("slic_scale", SLIC_SCALE),
         "slic_sigma": summary.get("slic_sigma", SLIC_SIGMA),
@@ -591,7 +663,7 @@ def caracterizar_desde_segmentacion_existente(
 
     return caracterizar_rectangulo(
         etiquetas=etiquetas,
-        valido=valido,
+        valido=valido_stack,
         stack=stack,
         nombres_bandas=nombres,
         transform=transform,
@@ -604,44 +676,53 @@ def caracterizar_desde_segmentacion_existente(
 
 def _buscar_fila_seleccion(
     grid_id: str,
-    gpkg_utm18: Path,
-    gpkg_utm19: Path,
     rev_year: int,
+    gpkg_seleccion: Path | None = None,
 ) -> pd.Series:
-    for gdf in load_selection_gpkg(gpkg_utm18, gpkg_utm19, rev_year, grid_id=grid_id):
+    for gdf in cargar_gpkg_seleccion(
+        GPKG_UTM18,
+        GPKG_UTM19,
+        rev_year,
+        grid_id=grid_id,
+        gpkg_seleccion=gpkg_seleccion or GPKG_SELECCION,
+    ):
         if not gdf.empty:
             return gdf.iloc[0]
     raise ValueError(f"Rectángulo {grid_id} no encontrado en selección rev_year={rev_year}")
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def parsear_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Caracterización zonal post-segmentación (GPKG revisión + Parquet features)."
+        description="Caracterización zonal post-segmentación (segments.gpkg + Parquet)."
     )
     p.add_argument("--grid-id", type=str, required=True, help="Identificador del rectángulo")
     p.add_argument(
         "--segmentacion-dir",
         type=Path,
         default=None,
-        help="Raíz de segmentacion_slic_rev{year} (default: prod/…)",
+        help="Raíz de salidas de segmentación (default: prod/03_segmentation_cim/{rev_year})",
     )
-    p.add_argument("--rev-year", type=int, default=2015)
-    p.add_argument("--gpkg-utm18", type=Path, default=GPKG_UTM18)
-    p.add_argument("--gpkg-utm19", type=Path, default=GPKG_UTM19)
+    p.add_argument("--rev-year", type=int, default=2015, help="Año de revisión")
+    p.add_argument(
+        "--gpkg-seleccion",
+        type=Path,
+        default=GPKG_SELECCION,
+        help="GPKG nacional de selección",
+    )
     p.add_argument(
         "--dir-salida",
         type=Path,
         default=DIR_SALIDA_BASE,
-        help="Raíz prod segmentacion_slic_rev{year} (default: DIR_SALIDA_BASE)",
+        help="Directorio base de salida de caracterización",
     )
-    p.add_argument("--buffer-px", type=int, default=BUFFER_PX)
+    p.add_argument("--buffer-px", type=int, default=BUFFER_PX, help="Buffer en píxeles")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+    args = parsear_args(argv)
     seg_root = args.segmentacion_dir or output_dir(args.rev_year)
-    fila = _buscar_fila_seleccion(args.grid_id, args.gpkg_utm18, args.gpkg_utm19, args.rev_year)
+    fila = _buscar_fila_seleccion(args.grid_id, args.rev_year, args.gpkg_seleccion)
 
     tile = str(fila.get("_tile") or args.grid_id.split("_")[0])
     rect_dir = seg_root / tile / args.grid_id
@@ -662,8 +743,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Manifiesto: {resultado['manifiesto']}")
-    print(f"Verificación GPKG↔Parquet: OK ({resultado['n_segmentos']} segmentos)")
+    print(f"Verificación: OK ({resultado['n_segmentos']} segmentos)")
     return 0
+
+
+parse_args = parsear_args
 
 
 if __name__ == "__main__":
